@@ -1,0 +1,4 @@
+[submodule "engine-src"]
+	path = engine-src
+	url = https://github.com/davidspies/rftg.git
+	branch = analyzer

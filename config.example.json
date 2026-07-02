@@ -1,0 +1,15 @@
+{
+  "_instructions": [
+    "1. Copy this file to config.json",
+    "2. Log in to boardgamearena.com in your browser",
+    "3. Open dev tools (F12) -> Network tab -> reload the page",
+    "4. Click any request to boardgamearena.com and copy the full",
+    "   value of the 'Cookie' request header",
+    "5. Paste it as the value of bga_cookie below",
+    "6. (optional) set player_id to your numeric BGA player id;",
+    "   otherwise it is auto-detected"
+  ],
+  "bga_cookie": "PASTE_YOUR_COOKIE_HERE",
+  "player_id": null,
+  "bga_username": "your-bga-username"
+}

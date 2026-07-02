@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RftG Analyzer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="sidebar">
+  <h1>RftG Analyzer</h1>
+  <div class="controls">
+    <button id="btn-sync" title="Fetch your recent games from BGA">Sync BGA games</button>
+    <form id="demo-form">
+      <select id="demo-exp">
+        <option value="0">Base</option>
+        <option value="1">Gathering Storm</option>
+        <option value="2">Rebel vs Imperium</option>
+        <option value="3" selected>Brink of War</option>
+      </select>
+      <select id="demo-players">
+        <option value="2" selected>2P</option>
+        <option value="3">3P</option>
+        <option value="4">4P</option>
+      </select>
+      <button type="submit">New demo game</button>
+    </form>
+  </div>
+  <ul id="game-list"></ul>
+  <div id="bga-tables"></div>
+</div>
+
+<div id="main">
+  <div id="empty-state">Select a game on the left, or generate a demo
+    game to explore the interface.</div>
+
+  <div id="review" style="display:none">
+    <div id="nav">
+      <button id="prev">&#8592; Prev</button>
+      <span id="nav-pos"></span>
+      <button id="next">Next &#8594;</button>
+      <input type="range" id="nav-slider" min="0" value="0">
+      <label class="mini"><input type="checkbox" id="only-mistakes">
+        only mistakes</label>
+      <label class="mini perspective" id="perspective-wrap"
+             style="display:none">view as
+        <select id="perspective-select"></select>
+      </label>
+      <a id="bga-link" target="_blank" style="display:none">BGA replay &#8599;</a>
+    </div>
+
+    <div id="log" class="log"></div>
+
+    <div id="decision-card">
+      <div id="decision-title"></div>
+      <div id="options"></div>
+    </div>
+
+    <div id="state"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

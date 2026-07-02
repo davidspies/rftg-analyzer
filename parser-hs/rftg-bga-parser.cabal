@@ -1,0 +1,65 @@
+cabal-version: 3.4
+name: rftg-bga-parser
+version: 0.1.0.0
+license: GPL-2.0-or-later
+build-type: Simple
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wpartial-fields
+    -Wredundant-constraints
+
+library
+  import: warnings
+  hs-source-dirs: src
+  exposed-modules:
+    Rftg.Bga.Json
+    Rftg.Bga.Types
+    Rftg.Keldon.Render
+    Rftg.Keldon.Script
+    Rftg.Parser.Common
+    Rftg.Parser.Action
+    Rftg.Parser.CardIndex
+    Rftg.Parser.Draw
+    Rftg.Parser.Expect
+    Rftg.Parser.Expect.HandNames
+    Rftg.Parser.Game
+    Rftg.Parser.Header
+    Rftg.Parser.Phase.Consume
+    Rftg.Parser.Phase.Cursor
+    Rftg.Parser.Phase.Discard
+    Rftg.Parser.Phase.Explore
+    Rftg.Parser.Phase.PendingDiscard
+    Rftg.Parser.Phase.Payment
+    Rftg.Parser.Phase.Place
+    Rftg.Parser.Phase.Produce
+    Rftg.Parser.Phase.Settle
+    Rftg.Parser.Power.DiscardPrestige
+    Rftg.Parser.Power.Gambling
+    Rftg.Parser.Power.Search
+    Rftg.Parser.Power.Scavenger
+    Rftg.Parser.Setup
+  build-depends:
+    aeson >=2.0 && <2.3,
+    base >=4.18 && <4.22,
+    containers,
+    scientific,
+    text,
+    vector
+  default-language: GHC2021
+
+executable rftg-bga-parser
+  import: warnings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    aeson,
+    base,
+    rftg-bga-parser,
+    text
+  default-language: GHC2021

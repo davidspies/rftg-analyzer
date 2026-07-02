@@ -1,0 +1,9 @@
+engine/analyzer
+engine/analyzer-dbg
+engine/genscript
+engine/smoke
+config.json
+data/
+__pycache__/
+engine/t.*
+dist-newstyle/

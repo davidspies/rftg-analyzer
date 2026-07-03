@@ -29,6 +29,17 @@ import Rftg.Bga.Json
   , expectObject
   , textValue
   )
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , BgaState
+  , bgaStateHasPhase
+  , bgaStateIsExploreStart
+  , bgaStateIsFinalGameOver
+  , bgaStateIsNewActionRound
+  , bgaStateIsSearch
+  , bgaStateIsSearchStart
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -242,61 +253,49 @@ expectStep cardTypes state notification = do
 handleGameState :: ExpectState -> Object -> Either Text ExpectState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just stateIdValue -> do
-      stateId <- intValue "gameStateChange id" stateIdValue
+    Just bgaState -> do
       stateBeforeEnter <-
-        if stateId `elem` [201, 202]
+        if bgaStateIsSearch bgaState
           then pure state
           else finishPendingSearch state
-      case stateId of
-        201 -> do
+      if bgaStateIsSearchStart bgaState
+        then do
           pid <- PlayerId <$> (intValue "Search active_player" =<< field "active_player" args)
-          enterState stateId stateBeforeEnter { activeSearch = Just pid }
-        202 -> enterState stateId stateBeforeEnter
-        _ -> enterState stateId stateBeforeEnter
+          enterState bgaState stateBeforeEnter { activeSearch = Just pid }
+        else enterState bgaState stateBeforeEnter
 
-enterState :: Int -> ExpectState -> Either Text ExpectState
-enterState stateId state =
-  case stateId of
-    10 ->
+enterState :: BgaState -> ExpectState -> Either Text ExpectState
+enterState bgaState state
+  | bgaStateIsNewActionRound bgaState =
       pure (snapshotPrestige state)
         { currentPhase = PhaseAction
         , actionsCommitted = False
         }
-    11 -> setPhase PhaseReveal =<< commitActions state
-    12 -> setPhase PhaseReveal =<< commitActions state
-    20 -> flushPendingExplores =<< setPhase PhaseExplore =<< commitActions state
-    21 -> setPhase PhaseExplore =<< commitActions state
-    30 -> setPhase PhaseDevelop =<< commitActions state
-    31 -> setPhase PhaseDevelop =<< commitActions state
-    230 -> setPhase PhaseDevelop =<< commitActions state
-    231 -> setPhase PhaseDevelop =<< commitActions state
-    311 -> setPhase PhaseDevelop =<< commitActions state
-    40 -> setPhase PhaseSettle =<< commitActions state
-    41 -> setPhase PhaseSettle =<< commitActions state
-    42 -> setPhase PhaseSettle =<< commitActions state
-    43 -> setPhase PhaseSettle =<< commitActions state
-    241 -> setPhase PhaseSettle =<< commitActions state
-    242 -> setPhase PhaseSettle =<< commitActions state
-    341 -> setPhase PhaseSettle =<< commitActions state
-    342 -> setPhase PhaseSettle =<< commitActions state
-    442 -> setPhase PhaseSettle =<< commitActions state
-    542 -> setPhase PhaseSettle =<< commitActions state
-    50 -> setPhase PhaseConsume =<< commitActions state
-    51 -> setPhase PhaseConsume =<< commitActions state
-    52 -> setPhase PhaseConsume =<< commitActions state
-    60 -> setPhase PhaseProduce =<< commitActions state
-    61 -> setPhase PhaseProduce =<< commitActions state
-    62 -> setPhase PhaseProduce =<< commitActions state
-    69 -> setPhase PhaseProduce =<< commitActions state
-    70 -> setPhase PhaseDiscard =<< commitActions state
-    71 -> setPhase PhaseDiscard =<< commitActions state
-    98 -> setPhase PhaseGameOver =<< commitActions state
-    99 -> setPhase PhaseGameOver =<< commitActions state
-    100 -> pure state { currentPhase = PhaseGameOver }
-    _ -> pure state
+  | bgaStateIsExploreStart bgaState =
+      flushPendingExplores =<< setPhase PhaseExplore =<< commitActions state
+  | bgaStateIsFinalGameOver bgaState =
+      pure state { currentPhase = PhaseGameOver }
+  | bgaStateHasPhase BgaAction bgaState =
+      setPhase PhaseReveal =<< commitActions state
+  | bgaStateHasPhase BgaExplore bgaState =
+      setPhase PhaseExplore =<< commitActions state
+  | bgaStateHasPhase BgaDevelop bgaState =
+      setPhase PhaseDevelop =<< commitActions state
+  | bgaStateHasPhase BgaSettle bgaState =
+      setPhase PhaseSettle =<< commitActions state
+  | bgaStateHasPhase BgaConsume bgaState =
+      setPhase PhaseConsume =<< commitActions state
+  | bgaStateHasPhase BgaProduce bgaState =
+      setPhase PhaseProduce =<< commitActions state
+  | bgaStateHasPhase BgaDiscard bgaState =
+      setPhase PhaseDiscard =<< commitActions state
+  | bgaStateHasPhase BgaGameOver bgaState =
+      setPhase PhaseGameOver =<< commitActions state
+  | otherwise =
+      pure state
 
 setPhase :: CurrentPhase -> ExpectState -> Either Text ExpectState
 setPhase phase state = pure state { currentPhase = phase }

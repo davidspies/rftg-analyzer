@@ -12,6 +12,12 @@ module Rftg.Parser.Phase.Cursor
 
 import Data.Text (Text)
 
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , BgaState
+  , bgaStateIsNewActionRound
+  , bgaStatePhase
+  )
 import Rftg.Keldon.Script (ChoiceOrder (..))
 
 data Phase
@@ -39,15 +45,17 @@ initialPhaseCursor = PhaseCursor
   , cursorPhase = BeforeFirstAction
   }
 
-advancePhaseCursor :: Int -> PhaseCursor -> PhaseCursor
-advancePhaseCursor stateId cursor =
-  case stateId of
-    10 ->
+advancePhaseCursor :: BgaState -> PhaseCursor -> PhaseCursor
+advancePhaseCursor bgaState cursor
+  | bgaStateIsNewActionRound bgaState =
       cursor
         { cursorRound = Just (nextRound cursor)
         , cursorPhase = ActionSelection
         }
-    _ -> cursor { cursorPhase = phaseForState stateId (cursorPhase cursor) }
+  | otherwise =
+      case bgaStatePhase bgaState of
+        Nothing -> cursor
+        Just phase -> cursor { cursorPhase = phaseForBgaPhase phase }
 
 cursorChoiceOrder :: PhaseCursor -> Int -> Either Text ChoiceOrder
 cursorChoiceOrder cursor eventIx =
@@ -76,38 +84,14 @@ phaseOrder phase =
     Discard -> 6
     GameOver -> 9
 
-phaseForState :: Int -> Phase -> Phase
-phaseForState stateId current =
-  case stateId of
-    11 -> ActionReveal
-    12 -> ActionReveal
-    20 -> Explore
-    21 -> Explore
-    30 -> Develop
-    31 -> Develop
-    230 -> Develop
-    231 -> Develop
-    311 -> Develop
-    40 -> Settle
-    41 -> Settle
-    42 -> Settle
-    43 -> Settle
-    241 -> Settle
-    242 -> Settle
-    341 -> Settle
-    342 -> Settle
-    442 -> Settle
-    542 -> Settle
-    50 -> Consume
-    51 -> Consume
-    52 -> Consume
-    60 -> Produce
-    61 -> Produce
-    62 -> Produce
-    69 -> Produce
-    70 -> Discard
-    71 -> Discard
-    98 -> GameOver
-    99 -> GameOver
-    100 -> GameOver
-    _ -> current
+phaseForBgaPhase :: BgaPhase -> Phase
+phaseForBgaPhase phase =
+  case phase of
+    BgaAction -> ActionReveal
+    BgaExplore -> Explore
+    BgaDevelop -> Develop
+    BgaSettle -> Settle
+    BgaConsume -> Consume
+    BgaProduce -> Produce
+    BgaDiscard -> Discard
+    BgaGameOver -> GameOver

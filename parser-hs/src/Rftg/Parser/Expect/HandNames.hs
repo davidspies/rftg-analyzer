@@ -27,6 +27,16 @@ import Rftg.Bga.Json
   , textValue
   , valueText
   )
+import Rftg.Bga.State
+  ( BgaState
+  , bgaStateIsExploreStart
+  , bgaStateIsNewActionRound
+  , bgaStateIsSearch
+  , bgaStateIsSearchDone
+  , bgaStateIsSearchStart
+  , bgaStateIsTerraformingEngineers
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -104,7 +114,7 @@ data HandNameInsertion = HandNameInsertion
 
 data HandNamesState = HandNamesState
   { phaseCursor :: PhaseCursor
-  , currentStateId :: Maybe Int
+  , currentBgaState :: Maybe BgaState
   , cardIndex :: CardIndex
   , reviewPlayer :: Player
   , reviewHand :: Map Int Text
@@ -171,7 +181,7 @@ initialReviewHand gamedatas cardTypes player = do
 emptyHandNamesState :: [Player] -> Player -> CardIndex -> Map Int Text -> Set PlayerId -> HandNamesState
 emptyHandNamesState players review startingCardIndex hand startPlayers = HandNamesState
   { phaseCursor = initialPhaseCursor
-  , currentStateId = Nothing
+  , currentBgaState = Nothing
   , cardIndex = startingCardIndex
   , reviewPlayer = review
   , reviewHand = hand
@@ -230,35 +240,33 @@ handNamesStep players cardInfosByName cardTypes state (eventIx, notification) = 
 handleGameState :: [Player] -> Map Int Text -> Int -> HandNamesState -> Object -> Either Text HandNamesState
 handleGameState players cardTypes eventIx state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
+    Just bgaState -> do
       stateBeforeEnter <-
-        case stateId of
-          201 -> pure state
-          202 -> pure state
-          _ -> finishActiveSearch state
+        if bgaStateIsSearch bgaState
+          then pure state
+          else finishActiveSearch state
       stateBeforeAdvance <-
-        if stateId == 10
+        if bgaStateIsNewActionRound bgaState
           then flushAllPending players eventIx stateBeforeEnter
           else pure stateBeforeEnter
-      advanced <- enterState players stateId args stateBeforeAdvance
-      if stateId == 20
+      advanced <- enterState players bgaState args stateBeforeAdvance
+      if bgaStateIsExploreStart bgaState
         then flushPendingExplores cardTypes advanced
         else pure advanced
 
-enterState :: [Player] -> Int -> Object -> HandNamesState -> Either Text HandNamesState
-enterState players stateId args state =
-  case stateId of
-    201 -> do
+enterState :: [Player] -> BgaState -> Object -> HandNamesState -> Either Text HandNamesState
+enterState players bgaState args state
+  | bgaStateIsSearchStart bgaState = do
       pid <- activePidFromState players args
       case activeSearch state of
         Nothing ->
           pure state
             { activeSearch = Just pid
-            , phaseCursor = advancePhaseCursor stateId (phaseCursor state)
-            , currentStateId = Just stateId
+            , phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
+            , currentBgaState = Just bgaState
             }
         Just current ->
           Left
@@ -267,15 +275,15 @@ enterState players stateId args state =
                 <> " while entering Search for "
                 <> showText (unPlayerId pid)
             )
-    202 -> do
+  | bgaStateIsSearchDone bgaState = do
       pid <- activePidFromState players args
       case activeSearch state of
         Nothing -> Left ("Search done for player " <> showText (unPlayerId pid) <> " without active Search")
         Just current
           | current == pid ->
               pure state
-                { phaseCursor = advancePhaseCursor stateId (phaseCursor state)
-                , currentStateId = Just stateId
+                { phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
+                , currentBgaState = Just bgaState
                 }
           | otherwise ->
               Left
@@ -285,10 +293,10 @@ enterState players stateId args state =
                     <> showText (unPlayerId current)
                     <> " is active"
                 )
-    _ ->
+  | otherwise =
       pure state
-        { phaseCursor = advancePhaseCursor stateId (phaseCursor state)
-        , currentStateId = Just stateId
+        { phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
+        , currentBgaState = Just bgaState
         }
 
 activePidFromState :: [Player] -> Object -> Either Text PlayerId
@@ -360,7 +368,7 @@ handleDiscardFromTableau cardInfosByName state notification = do
               if not (startSeen stateWithoutCard)
                 then pure stateWithoutCard
                 else if cardTypeType info == "world"
-                  && (currentStateId state == Just 542 || not (cardTypeIsSettlePaymentDiscardSource info))
+                  && (maybe False bgaStateIsTerraformingEngineers (currentBgaState state) || not (cardTypeIsSettlePaymentDiscardSource info))
                   then
                     pure stateWithoutCard
                       { pendingUpgrades = Map.insert pid name (pendingUpgrades stateWithoutCard)

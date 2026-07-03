@@ -19,6 +19,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Rftg.Bga.Json
+    Rftg.Bga.State
     Rftg.Bga.Types
     Rftg.Keldon.Render
     Rftg.Keldon.Script

@@ -23,6 +23,13 @@ import Rftg.Bga.Json
   , optionalField
   , expectObject
   )
+import Rftg.Bga.State
+  ( BgaState
+  , bgaSettleSourceName
+  , bgaStateClearsSettleSource
+  , bgaStateIsTerraformingEngineers
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -67,7 +74,7 @@ data SettleSource = SettleSource
 
 data SettleState = SettleState
   { phaseCursor :: PhaseCursor
-  , currentStateId :: Maybe Int
+  , currentBgaState :: Maybe BgaState
   , cardIndex :: CardIndex
   , tableauCards :: Map PlayerId [Text]
   , currentSettleSource :: Maybe SettleSource
@@ -102,7 +109,7 @@ parseSettleChoices rootValue = do
 emptySettleState :: [Player] -> CardIndex -> SettleState
 emptySettleState players startingCardIndex = SettleState
   { phaseCursor = initialPhaseCursor
-  , currentStateId = Nothing
+  , currentBgaState = Nothing
   , cardIndex = startingCardIndex
   , tableauCards = Map.fromList [(playerId player, []) | player <- players]
   , currentSettleSource = Nothing
@@ -134,19 +141,19 @@ settleStep players cardInfosByName cardTypes state (eventIx, notification) = do
 handleGameState :: [Player] -> Int -> SettleState -> Object -> Either Text SettleState
 handleGameState players eventIx state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
+    Just bgaState -> do
       cleared <-
-        if stateClearsSettleSource stateId
+        if bgaStateClearsSettleSource bgaState
           then clearSettleSource players eventIx True state
           else pure state
       let advanced = cleared
-            { phaseCursor = advancePhaseCursor stateId (phaseCursor cleared)
-            , currentStateId = Just stateId
+            { phaseCursor = advancePhaseCursor bgaState (phaseCursor cleared)
+            , currentBgaState = Just bgaState
             }
-      case extraSettleSourceName stateId of
+      case bgaSettleSourceName bgaState of
         Nothing -> pure advanced
         Just sourceName -> do
           sourcePlayer <- optionalActivePlayer players args
@@ -155,42 +162,6 @@ handleGameState players eventIx state notification = do
             { currentSettleSource = Just (SettleSource sourceName sourcePlayer step)
             , extraSettleStep = step
             }
-
-stateClearsSettleSource :: Int -> Bool
-stateClearsSettleSource stateId =
-  stateId
-    `elem`
-      [ 10
-      , 20
-      , 21
-      , 30
-      , 31
-      , 230
-      , 231
-      , 311
-      , 40
-      , 50
-      , 51
-      , 52
-      , 60
-      , 61
-      , 62
-      , 69
-      , 70
-      , 71
-      , 98
-      , 99
-      , 100
-      ]
-
-extraSettleSourceName :: Int -> Maybe Text
-extraSettleSourceName stateId =
-  case stateId of
-    42 -> Just "Improved Logistics"
-    242 -> Just "Rebel Sneak Attack"
-    342 -> Just "Imperium Supply Convoy"
-    442 -> Just "Terraforming Project"
-    _ -> Nothing
 
 optionalActivePlayer :: [Player] -> Object -> Either Text (Maybe PlayerId)
 optionalActivePlayer players args = do
@@ -254,7 +225,7 @@ handleDiscardFromTableau cardInfosByName state notification = do
                 , discardedTableauCards = Set.insert cardInstanceId (discardedTableauCards state)
                 }
           info <- lookupCardInfo cardInfosByName name
-          if currentStateId state == Just 542 && cardTypeType info == "world"
+          if maybe False bgaStateIsTerraformingEngineers (currentBgaState state) && cardTypeType info == "world"
             then
               case Map.lookup owner (pendingUpgrades stateWithoutCard) of
                 Nothing ->

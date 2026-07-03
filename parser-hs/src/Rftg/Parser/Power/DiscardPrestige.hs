@@ -21,6 +21,11 @@ import Rftg.Bga.Json
   , expectObject
   , textValue
   )
+import Rftg.Bga.State
+  ( bgaStateIsNewActionRound
+  , bgaStateIsSearch
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -119,14 +124,14 @@ discardPrestigeStep players cardInfosByName cardTypes state (eventIx, notificati
 handleGameState :: DiscardPrestigeState -> Object -> Either Text DiscardPrestigeState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      let cursor = advancePhaseCursor stateId (phaseCursor state)
-          searchActive = stateId == 201 || stateId == 202
+    Just bgaState -> do
+      let cursor = advancePhaseCursor bgaState (phaseCursor state)
+          searchActive = bgaStateIsSearch bgaState
           pending =
-            if stateId == 10
+            if bgaStateIsNewActionRound bgaState
               then Map.empty
               else pendingDiscards state
       pure state

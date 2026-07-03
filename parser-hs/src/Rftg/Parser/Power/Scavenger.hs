@@ -22,6 +22,13 @@ import Rftg.Bga.Json
   , expectObject
   , textValue
   )
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , bgaPhaseOrder
+  , bgaStateIsNewActionRound
+  , bgaStatePhaseOrder
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -92,53 +99,22 @@ scavengerStep players cardTypes state (eventIx, notification) =
 handleGameState :: ScavengerState -> Object -> Either Text ScavengerState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      case stateId of
-        10 -> pure state { currentRound = Just (nextRound state), phaseOrder = 0 }
-        _ -> pure state { phaseOrder = phaseOrderFor stateId (phaseOrder state) }
+    Just bgaState
+      | bgaStateIsNewActionRound bgaState ->
+          pure state { currentRound = Just (nextRound state), phaseOrder = bgaPhaseOrder BgaAction }
+      | otherwise ->
+          case bgaStatePhaseOrder bgaState of
+            Nothing -> pure state
+            Just order -> pure state { phaseOrder = order }
 
 nextRound :: ScavengerState -> Int
 nextRound state =
   case currentRound state of
     Nothing -> 0
     Just n -> n + 1
-
-phaseOrderFor :: Int -> Int -> Int
-phaseOrderFor stateId current =
-  case stateId of
-    20 -> 1
-    21 -> 1
-    30 -> 2
-    31 -> 2
-    230 -> 2
-    231 -> 2
-    311 -> 2
-    40 -> 3
-    41 -> 3
-    42 -> 3
-    43 -> 3
-    241 -> 3
-    242 -> 3
-    341 -> 3
-    342 -> 3
-    442 -> 3
-    542 -> 3
-    50 -> 4
-    51 -> 4
-    52 -> 4
-    60 -> 5
-    61 -> 5
-    62 -> 5
-    69 -> 5
-    70 -> 6
-    71 -> 6
-    98 -> 9
-    99 -> 9
-    100 -> 9
-    _ -> current
 
 handleShowTableau :: Map Int Text -> ScavengerState -> Object -> Either Text ScavengerState
 handleShowTableau cardTypes state notification = do

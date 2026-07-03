@@ -14,10 +14,15 @@ import Data.Text qualified as Text
 
 import Rftg.Bga.Json
   ( Object
-  , intValue
   , objectField
-  , optionalField
   , expectObject
+  )
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , bgaStateHasPhase
+  , bgaStateIsNewActionRound
+  , bgaStateLeavesPhase
+  , optionalBgaStateField
   )
 import Rftg.Bga.Types
   ( Player (..)
@@ -110,64 +115,24 @@ exploreStep players cardTypes state (eventIx, notification) = do
 handleGameState :: ExploreState -> Object -> Either Text ExploreState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      case stateId of
-        10 -> pure state { currentRound = Just (nextRound state), phaseCursor = OutsideExplore }
-        20 -> pure state { phaseCursor = InExplore }
-        21 -> pure state { phaseCursor = InExplore }
-        _
-          | isKnownNonExploreState stateId ->
-              pure state { phaseCursor = OutsideExplore }
-          | otherwise ->
-              pure state
+    Just bgaState
+      | bgaStateIsNewActionRound bgaState ->
+          pure state { currentRound = Just (nextRound state), phaseCursor = OutsideExplore }
+      | bgaStateHasPhase BgaExplore bgaState ->
+          pure state { phaseCursor = InExplore }
+      | bgaStateLeavesPhase BgaExplore bgaState ->
+          pure state { phaseCursor = OutsideExplore }
+      | otherwise ->
+          pure state
 
 nextRound :: ExploreState -> Int
 nextRound state =
   case currentRound state of
     Nothing -> 0
     Just n -> n + 1
-
-isKnownNonExploreState :: Int -> Bool
-isKnownNonExploreState stateId =
-  stateId `elem`
-    [ 3
-    , 4
-    , 5
-    , 10
-    , 11
-    , 12
-    , 19
-    , 30
-    , 31
-    , 40
-    , 41
-    , 42
-    , 43
-    , 50
-    , 51
-    , 52
-    , 60
-    , 61
-    , 62
-    , 69
-    , 70
-    , 71
-    , 98
-    , 99
-    , 100
-    , 230
-    , 231
-    , 241
-    , 242
-    , 311
-    , 341
-    , 342
-    , 442
-    , 542
-    ]
 
 handleExploredChoice :: Map Int Text -> ExploreState -> Object -> Either Text ExploreState
 handleExploredChoice cardTypes state notification = do

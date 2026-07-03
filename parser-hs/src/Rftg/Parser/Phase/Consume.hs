@@ -21,6 +21,7 @@ import Rftg.Bga.Json
   , expectObject
   , textValue
   )
+import Rftg.Bga.State (optionalBgaStateField)
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -92,7 +93,6 @@ data ConsumeBlock = ConsumeBlock
 
 data ConsumeState = ConsumeState
   { phaseCursor :: PhaseCursor
-  , currentStateId :: Maybe Int
   , cardIndex :: CardIndex
   , activeGoods :: Map Int Int
   , queuedDraws :: [QueuedDraw]
@@ -126,7 +126,6 @@ parseConsumeChoices rootValue = do
 emptyConsumeState :: CardIndex -> ConsumeState
 emptyConsumeState startingCardIndex = ConsumeState
   { phaseCursor = initialPhaseCursor
-  , currentStateId = Nothing
   , cardIndex = startingCardIndex
   , activeGoods = Map.empty
   , queuedDraws = []
@@ -161,13 +160,12 @@ consumeStep players cardInfosByName cardTypes state (eventIx, notification) = do
 handleGameState :: ConsumeState -> Object -> Either Text ConsumeState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
+    Just bgaState ->
       pure state
-        { phaseCursor = advancePhaseCursor stateId (phaseCursor state)
-        , currentStateId = Just stateId
+        { phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
         }
 
 handleGoodProduction :: ConsumeState -> Object -> Either Text ConsumeState

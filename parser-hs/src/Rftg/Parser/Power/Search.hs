@@ -19,9 +19,13 @@ import Rftg.Bga.Json
   , field
   , intValue
   , objectField
-  , optionalField
   , expectObject
   , textValue
+  )
+import Rftg.Bga.State
+  ( bgaStateIsSearchDone
+  , bgaStateIsSearchStart
+  , optionalBgaStateField
   )
 import Rftg.Bga.Types
   ( Player (..)
@@ -116,18 +120,17 @@ handleGameState ::
   Either Text SearchState
 handleGameState players cardInfosByName eventIx state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      case stateId of
-        201 -> do
+    Just bgaState
+      | bgaStateIsSearchStart bgaState -> do
           pid <- activePidFromState players args
           case activeSearch state of
             Nothing ->
               pure state
                 { activeSearch = Just (emptySearchProgress pid)
-                , phaseCursor = advancePhaseCursor stateId (phaseCursor state)
+                , phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
                 }
             Just current ->
               Left
@@ -136,13 +139,13 @@ handleGameState players cardInfosByName eventIx state notification = do
                     <> " while entering Search for "
                     <> showText (unPlayerId pid)
                 )
-        202 -> do
+      | bgaStateIsSearchDone bgaState -> do
           pid <- activePidFromState players args
           case activeSearch state of
             Nothing -> Left ("Search done for player " <> showText (unPlayerId pid) <> " without active Search")
             Just current
               | searchPlayer current == pid ->
-                  pure state { phaseCursor = advancePhaseCursor stateId (phaseCursor state) }
+                  pure state { phaseCursor = advancePhaseCursor bgaState (phaseCursor state) }
               | otherwise ->
                   Left
                     ( "Search done for player "
@@ -151,9 +154,9 @@ handleGameState players cardInfosByName eventIx state notification = do
                         <> showText (unPlayerId (searchPlayer current))
                         <> " is active"
                     )
-        _ -> do
+      | otherwise -> do
           finished <- finishActiveSearch players cardInfosByName eventIx state
-          pure finished { phaseCursor = advancePhaseCursor stateId (phaseCursor finished) }
+          pure finished { phaseCursor = advancePhaseCursor bgaState (phaseCursor finished) }
 
 emptySearchProgress :: PlayerId -> SearchProgress
 emptySearchProgress pid = SearchProgress

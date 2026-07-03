@@ -21,6 +21,13 @@ import Rftg.Bga.Json
   , expectObject
   , textValue
   )
+import Rftg.Bga.State
+  ( BgaState
+  , bgaStateIsNewActionRound
+  , bgaStateIsSearch
+  , bgaStateIsSettleMain
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -74,7 +81,7 @@ data QueuedDraw = QueuedDraw
 
 data OptionalDiscardState = OptionalDiscardState
   { phaseCursor :: PhaseCursor
-  , currentStateId :: Maybe Int
+  , currentBgaState :: Maybe BgaState
   , activeSearch :: Bool
   , cardIndex :: CardIndex
   , queuedDraws :: [QueuedDraw]
@@ -104,7 +111,7 @@ parseOptionalDiscardChoices rootValue = do
 emptyOptionalDiscardState :: CardIndex -> OptionalDiscardState
 emptyOptionalDiscardState startingCardIndex = OptionalDiscardState
   { phaseCursor = initialPhaseCursor
-  , currentStateId = Nothing
+  , currentBgaState = Nothing
   , activeSearch = False
   , cardIndex = startingCardIndex
   , queuedDraws = []
@@ -137,19 +144,18 @@ optionalDiscardStep players cardTypes state (eventIx, notification) = do
 handleGameState :: [Player] -> Int -> OptionalDiscardState -> Object -> Either Text OptionalDiscardState
 handleGameState players eventIx state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
+    Just bgaState -> do
       flushed <-
-        if stateId == 10
+        if bgaStateIsNewActionRound bgaState
           then flushAllPending players eventIx state
           else pure state
-      let searchActive = stateId == 201 || stateId == 202
       pure flushed
-        { phaseCursor = advancePhaseCursor stateId (phaseCursor flushed)
-        , currentStateId = Just stateId
-        , activeSearch = searchActive
+        { phaseCursor = advancePhaseCursor bgaState (phaseCursor flushed)
+        , currentBgaState = Just bgaState
+        , activeSearch = bgaStateIsSearch bgaState
         }
 
 handleDiscard :: [Player] -> Int -> OptionalDiscardState -> Object -> Either Text OptionalDiscardState
@@ -186,7 +192,7 @@ capturesPendingDiscard state =
     (_, Produce) -> False
     (_, Discard) -> False
     _
-      | currentStateId state == Just 40 -> False
+      | maybe False bgaStateIsSettleMain (currentBgaState state) -> False
       | otherwise -> not (activeSearch state)
 
 queueLoggedDraw :: OptionalDiscardState -> Object -> Either Text OptionalDiscardState

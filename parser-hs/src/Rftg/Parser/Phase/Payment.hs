@@ -27,6 +27,11 @@ import Rftg.Bga.Json
   , textValue
   , valueText
   )
+import Rftg.Bga.State
+  ( BgaState
+  , bgaStateIsTerraformingEngineers
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -90,7 +95,7 @@ data PaymentLine = PaymentLine
 
 data PaymentState = PaymentState
   { phaseCursor :: PhaseCursor
-  , currentStateId :: Maybe Int
+  , currentBgaState :: Maybe BgaState
   , cardIndex :: CardIndex
   , startSeen :: Bool
   , tableauCards :: Map PlayerId [Text]
@@ -126,7 +131,7 @@ parsePaymentChoices rootValue = do
 emptyPaymentState :: [Player] -> CardIndex -> PaymentState
 emptyPaymentState players startingCardIndex = PaymentState
   { phaseCursor = initialPhaseCursor
-  , currentStateId = Nothing
+  , currentBgaState = Nothing
   , cardIndex = startingCardIndex
   , startSeen = False
   , tableauCards = Map.fromList [(playerId player, []) | player <- players]
@@ -166,13 +171,13 @@ paymentStep players cardInfosByName cardTypes state (eventIx, notification) = do
 handleGameState :: PaymentState -> Object -> Either Text PaymentState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
+    Just bgaState ->
       pure state
-        { phaseCursor = advancePhaseCursor stateId (phaseCursor state)
-        , currentStateId = Just stateId
+        { phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
+        , currentBgaState = Just bgaState
         }
 
 handleShowTableau :: Map Int Text -> PaymentState -> Object -> Either Text PaymentState
@@ -276,7 +281,7 @@ handleDiscardFromTableau cardInfosByName state notification = do
           if not (startSeen stateWithoutCard)
             then pure stateWithoutCard
             else if cardTypeType info == "world"
-              && (currentStateId state == Just 542 || not (cardTypeIsSettlePaymentDiscardSource info))
+              && (maybe False bgaStateIsTerraformingEngineers (currentBgaState state) || not (cardTypeIsSettlePaymentDiscardSource info))
             then
               pure stateWithoutCard
                 { pendingUpgrades = Map.insert owner name (pendingUpgrades stateWithoutCard)

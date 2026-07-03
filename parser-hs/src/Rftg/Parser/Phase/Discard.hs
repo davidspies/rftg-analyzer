@@ -13,10 +13,15 @@ import Data.Text qualified as Text
 
 import Rftg.Bga.Json
   ( Object
-  , intValue
   , objectField
-  , optionalField
   , expectObject
+  )
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , bgaStateHasPhase
+  , bgaStateIsNewActionRound
+  , bgaStateLeavesPhase
+  , optionalBgaStateField
   )
 import Rftg.Bga.Types
   ( Player (..)
@@ -100,64 +105,24 @@ discardStep players cardTypes state (eventIx, notification) = do
 handleGameState :: DiscardState -> Object -> Either Text DiscardState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      case stateId of
-        10 -> pure state { currentRound = Just (nextRound state), phaseCursor = OutsideDiscard }
-        70 -> pure state { phaseCursor = InDiscard }
-        71 -> pure state { phaseCursor = InDiscard }
-        _
-          | isKnownNonDiscardState stateId ->
-              pure state { phaseCursor = OutsideDiscard }
-          | otherwise ->
-              pure state
+    Just bgaState
+      | bgaStateIsNewActionRound bgaState ->
+          pure state { currentRound = Just (nextRound state), phaseCursor = OutsideDiscard }
+      | bgaStateHasPhase BgaDiscard bgaState ->
+          pure state { phaseCursor = InDiscard }
+      | bgaStateLeavesPhase BgaDiscard bgaState ->
+          pure state { phaseCursor = OutsideDiscard }
+      | otherwise ->
+          pure state
 
 nextRound :: DiscardState -> Int
 nextRound state =
   case currentRound state of
     Nothing -> 0
     Just n -> n + 1
-
-isKnownNonDiscardState :: Int -> Bool
-isKnownNonDiscardState stateId =
-  stateId `elem`
-    [ 3
-    , 4
-    , 5
-    , 10
-    , 11
-    , 12
-    , 19
-    , 20
-    , 21
-    , 30
-    , 31
-    , 40
-    , 41
-    , 42
-    , 43
-    , 50
-    , 51
-    , 52
-    , 60
-    , 61
-    , 62
-    , 69
-    , 98
-    , 99
-    , 100
-    , 230
-    , 231
-    , 241
-    , 242
-    , 311
-    , 341
-    , 342
-    , 442
-    , 542
-    ]
 
 handleDiscard :: [Player] -> Int -> DiscardState -> Object -> Either Text DiscardState
 handleDiscard players eventIx state notification =

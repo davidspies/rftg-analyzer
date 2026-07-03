@@ -22,6 +22,14 @@ import Rftg.Bga.Json
   , optionalField
   , expectObject
   )
+import Rftg.Bga.State
+  ( BgaState
+  , bgaStateIsDevelopMain
+  , bgaStateIsNewActionRound
+  , bgaStateIsSettleMain
+  , bgaStateIsTerraformingEngineers
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -62,7 +70,7 @@ data BuildPhase = DevelopBuild | SettleBuild
 
 data PlaceState = PlaceState
   { phaseCursor :: PhaseCursor
-  , currentStateId :: Maybe Int
+  , currentBgaState :: Maybe BgaState
   , cardIndex :: CardIndex
   , developStep :: Int
   , settleStep :: Int
@@ -96,7 +104,7 @@ parsePlaceChoices rootValue = do
 emptyPlaceState :: [Player] -> CardIndex -> PlaceState
 emptyPlaceState players startingCardIndex = PlaceState
   { phaseCursor = initialPhaseCursor
-  , currentStateId = Nothing
+  , currentBgaState = Nothing
   , cardIndex = startingCardIndex
   , developStep = 0
   , settleStep = 0
@@ -129,23 +137,22 @@ placeStep players cardInfosByName cardTypes state (eventIx, notification) = do
 handleGameState :: [Player] -> PlaceState -> Object -> Either Text PlaceState
 handleGameState players state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      let advanced = advanceForState players stateId state
+    Just bgaState -> do
+      let advanced = advanceForState players bgaState state
       pure advanced
-        { phaseCursor = advancePhaseCursor stateId (phaseCursor advanced)
-        , currentStateId = Just stateId
+        { phaseCursor = advancePhaseCursor bgaState (phaseCursor advanced)
+        , currentBgaState = Just bgaState
         }
 
-advanceForState :: [Player] -> Int -> PlaceState -> PlaceState
-advanceForState players stateId state =
-  case stateId of
-    10 -> resetRound players state
-    30 -> state { developStep = developStep state + 1 }
-    40 -> state { settleStep = settleStep state + 1 }
-    _ -> state
+advanceForState :: [Player] -> BgaState -> PlaceState -> PlaceState
+advanceForState players bgaState state
+  | bgaStateIsNewActionRound bgaState = resetRound players state
+  | bgaStateIsDevelopMain bgaState = state { developStep = developStep state + 1 }
+  | bgaStateIsSettleMain bgaState = state { settleStep = settleStep state + 1 }
+  | otherwise = state
 
 resetRound :: [Player] -> PlaceState -> PlaceState
 resetRound players state =
@@ -173,7 +180,7 @@ handleDiscardFromTableau cardInfosByName state notification = do
           info <- lookupCardInfo cardInfosByName name
           let stateWithDiscard =
                 state { discardedTableauCards = Set.insert cardInstanceId (discardedTableauCards state) }
-          if currentStateId state == Just 542 && cardTypeType info == "world"
+          if maybe False bgaStateIsTerraformingEngineers (currentBgaState state) && cardTypeType info == "world"
             then
               case Map.lookup owner (pendingUpgrades stateWithDiscard) of
                 Nothing ->

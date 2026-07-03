@@ -19,8 +19,13 @@ import Rftg.Bga.Json
   , intValue
   , keyText
   , objectField
-  , optionalField
   , expectObject
+  )
+import Rftg.Bga.State
+  ( BgaState
+  , bgaStateIsNewActionRound
+  , bgaStateIsSelectLastAction
+  , optionalBgaStateField
   )
 import Rftg.Bga.Types
   ( Player (..)
@@ -89,11 +94,11 @@ collectRounds notifications =
     finish done current (notification : rest) =
       case notificationType notification of
         "gameStateChange" -> do
-          stateId <- gameStateId notification
-          case stateId of
-            Just 10 ->
+          bgaState <- gameState notification
+          case bgaState of
+            Just state | bgaStateIsNewActionRound state ->
               finish (maybe done (: done) current) (Just emptyRound) rest
-            Just 12 -> do
+            Just state | bgaStateIsSelectLastAction state -> do
               pid <- activePlayer notification
               finish done (Just (setSelectLast pid current)) rest
             _ ->
@@ -266,12 +271,10 @@ phaseToAct phase =
     5 -> pure actProduce
     _ -> Left ("unknown phase " <> showText phase)
 
-gameStateId :: Object -> Either Text (Maybe Int)
-gameStateId notification = do
+gameState :: Object -> Either Text (Maybe BgaState)
+gameState notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
-    Nothing -> pure Nothing
-    Just value -> Just <$> intValue "gameStateChange id" value
+  optionalBgaStateField "gameStateChange id" args
 
 activePlayer :: Object -> Either Text PlayerId
 activePlayer notification = do

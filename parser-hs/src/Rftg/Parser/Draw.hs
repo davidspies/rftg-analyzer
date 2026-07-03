@@ -25,6 +25,16 @@ import Rftg.Bga.Json
   , expectObject
   , textValue
   )
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , BgaState
+  , bgaStateIsExploreStart
+  , bgaStateIsSearchDone
+  , bgaStateIsSearchStart
+  , bgaStateHasPhase
+  , bgaStateLeavesPhase
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -134,23 +144,25 @@ drawStep cardTypes players state notification =
 handleGameState :: Map Int Text -> [Player] -> DrawState -> Object -> Either Text DrawState
 handleGameState cardTypes players state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "game state id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just stateIdValue -> do
-      stateId <- intValue "game state id" stateIdValue
-      searchedState <- updateActiveSearch players stateId args state
-      case stateId of
-        20 -> flushPendingExplores cardTypes searchedState { currentPhase = Explore }
-        21 -> pure searchedState { currentPhase = Explore }
+    Just bgaState -> do
+      searchedState <- updateActiveSearch players bgaState args state
+      case () of
         _
-          | isKnownNonExploreState stateId ->
+          | bgaStateIsExploreStart bgaState ->
+              flushPendingExplores cardTypes searchedState { currentPhase = Explore }
+          | bgaStateHasPhase BgaExplore bgaState ->
+              pure searchedState { currentPhase = Explore }
+          | bgaStateLeavesPhase BgaExplore bgaState ->
               pure searchedState { currentPhase = OtherPhase }
           | otherwise ->
               pure searchedState
 
-updateActiveSearch :: [Player] -> Int -> Object -> DrawState -> Either Text DrawState
-updateActiveSearch players stateId args state
-  | stateId == 201 = do
+updateActiveSearch :: [Player] -> BgaState -> Object -> DrawState -> Either Text DrawState
+updateActiveSearch players bgaState args state
+  | bgaStateIsSearchStart bgaState = do
       pid <- activePidFromState players args
       case activeSearch state of
         Nothing -> pure state { activeSearch = Just pid }
@@ -161,7 +173,7 @@ updateActiveSearch players stateId args state
                 <> " while entering Search for "
                 <> showText (unPlayerId pid)
             )
-  | stateId == 202 = do
+  | bgaStateIsSearchDone bgaState = do
       pid <- activePidFromState players args
       case activeSearch state of
         Nothing ->
@@ -188,45 +200,6 @@ activePidFromState players args = do
 
 playerIds :: [Player] -> Set PlayerId
 playerIds = Set.fromList . fmap playerId
-
-isKnownNonExploreState :: Int -> Bool
-isKnownNonExploreState stateId =
-  stateId `elem`
-    [ 3
-    , 4
-    , 5
-    , 10
-    , 11
-    , 12
-    , 19
-    , 30
-    , 31
-    , 40
-    , 41
-    , 42
-    , 43
-    , 50
-    , 51
-    , 52
-    , 60
-    , 61
-    , 62
-    , 69
-    , 70
-    , 71
-    , 98
-    , 99
-    , 100
-    , 230
-    , 231
-    , 241
-    , 242
-    , 311
-    , 341
-    , 342
-    , 442
-    , 542
-    ]
 
 handleRevealCard :: [Player] -> DrawState -> Object -> Either Text DrawState
 handleRevealCard players state notification =

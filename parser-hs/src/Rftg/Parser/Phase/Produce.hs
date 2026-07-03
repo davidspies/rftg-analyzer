@@ -23,6 +23,14 @@ import Rftg.Bga.Json
   , expectObject
   , valueText
   )
+import Rftg.Bga.State
+  ( BgaPhase (..)
+  , BgaState
+  , bgaPhaseOrder
+  , bgaStateIsNewActionRound
+  , bgaStatePhaseOrder
+  , optionalBgaStateField
+  )
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -144,67 +152,37 @@ handleConsume players eventIx state notification = do
 handleGameState :: [Player] -> Int -> ProduceState -> Object -> Either Text ProduceState
 handleGameState players eventIx state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
+    Just bgaState -> do
       stateForTransition <-
-        if shouldFlushBeforeState state stateId
+        if shouldFlushBeforeState state bgaState
           then do
             checked <- ensureNoPendingDiscards state
             flushAllWindfalls players eventIx checked
           else pure state
-      pure (applyGameState stateId stateForTransition)
+      pure (applyGameState bgaState stateForTransition)
 
-applyGameState :: Int -> ProduceState -> ProduceState
-applyGameState stateId state =
-  case stateId of
-    10 -> state { currentRound = Just (nextRound state), phaseOrder = 0 }
-    _ -> state { phaseOrder = phaseOrderFor stateId (phaseOrder state) }
+applyGameState :: BgaState -> ProduceState -> ProduceState
+applyGameState bgaState state
+  | bgaStateIsNewActionRound bgaState =
+      state { currentRound = Just (nextRound state), phaseOrder = bgaPhaseOrder BgaAction }
+  | otherwise =
+      case bgaStatePhaseOrder bgaState of
+        Nothing -> state
+        Just order -> state { phaseOrder = order }
 
-shouldFlushBeforeState :: ProduceState -> Int -> Bool
-shouldFlushBeforeState state stateId =
-  stateId == 10 || (phaseOrder state == 5 && phaseOrderFor stateId (phaseOrder state) /= 5)
+shouldFlushBeforeState :: ProduceState -> BgaState -> Bool
+shouldFlushBeforeState state bgaState =
+  bgaStateIsNewActionRound bgaState
+    || (phaseOrder state == bgaPhaseOrder BgaProduce && bgaStatePhaseOrder bgaState /= Just (bgaPhaseOrder BgaProduce))
 
 nextRound :: ProduceState -> Int
 nextRound state =
   case currentRound state of
     Nothing -> 0
     Just n -> n + 1
-
-phaseOrderFor :: Int -> Int -> Int
-phaseOrderFor stateId current =
-  case stateId of
-    20 -> 1
-    21 -> 1
-    30 -> 2
-    31 -> 2
-    230 -> 2
-    231 -> 2
-    311 -> 2
-    40 -> 3
-    41 -> 3
-    42 -> 3
-    43 -> 3
-    241 -> 3
-    242 -> 3
-    341 -> 3
-    342 -> 3
-    442 -> 3
-    542 -> 3
-    50 -> 4
-    51 -> 4
-    52 -> 4
-    60 -> 5
-    61 -> 5
-    62 -> 5
-    69 -> 5
-    70 -> 6
-    71 -> 6
-    98 -> 9
-    99 -> 9
-    100 -> 9
-    _ -> current
 
 handleGoodProduction ::
   [Player] ->

@@ -15,9 +15,9 @@ import Rftg.Bga.Json
   , field
   , intValue
   , objectField
-  , optionalField
   , expectObject
   )
+import Rftg.Bga.State (optionalBgaStateField)
 import Rftg.Bga.Types
   ( Player (..)
   , PlayerId (..)
@@ -77,11 +77,11 @@ gamblingStep players state (eventIx, notification) =
 handleGameState :: GamblingState -> Object -> Either Text GamblingState
 handleGameState state notification = do
   args <- objectField "args" notification
-  case optionalField "id" args of
+  maybeBgaState <- optionalBgaStateField "gameStateChange id" args
+  case maybeBgaState of
     Nothing -> pure state
-    Just idValue -> do
-      stateId <- intValue "gameStateChange id" idValue
-      pure state { phaseCursor = advancePhaseCursor stateId (phaseCursor state) }
+    Just bgaState ->
+      pure state { phaseCursor = advancePhaseCursor bgaState (phaseCursor state) }
 
 handleGambling :: [Player] -> Int -> GamblingState -> Object -> Either Text GamblingState
 handleGambling players eventIx state notification = do

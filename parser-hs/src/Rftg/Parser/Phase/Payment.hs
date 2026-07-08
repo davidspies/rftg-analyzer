@@ -55,6 +55,8 @@ import Rftg.Parser.CardIndex
   )
 import Rftg.Parser.Common
   ( CardTypeInfo (..)
+  , PayMilitaryCondition (..)
+  , PayMilitaryPower (..)
   , cardId
   , cardName
   , canonicalCardName
@@ -90,6 +92,13 @@ data PaymentLine = PaymentLine
   , paymentLineMode :: ChoiceMode
   , paymentLineCards :: [Text]
   , paymentLineSpecials :: [Text]
+  }
+  deriving stock (Eq, Show)
+
+data PayMilitaryCandidate = PayMilitaryCandidate
+  { payMilitaryCandidateName :: Text
+  , payMilitaryCandidateReduction :: Int
+  , payMilitaryCandidatePreferContact :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -492,29 +501,55 @@ appendPaymentSpecial pid special state =
 
 payMilitarySource :: PlayerId -> CardTypeInfo -> Bool -> PaymentState -> Map Text CardTypeInfo -> Maybe Text
 payMilitarySource pid target preferContact state cardInfosByName =
-  if preferContact && matches "Contact Specialist"
-    then Just "Contact Specialist"
-    else case filter matches (Map.findWithDefault [] pid (tableauCards state)) of
-      source : _ -> Just source
-      [] -> Nothing
+  payMilitaryCandidateName <$> foldl chooseCandidate Nothing candidates
+  where
+    sources = Map.findWithDefault [] pid (tableauCards state)
+    candidates = concatMap sourceCandidates sources
+
+    sourceCandidates source =
+      case Map.lookup source cardInfosByName of
+        Nothing -> []
+        Just info ->
+          case bestMatchingPayMilitaryPower target info of
+            Nothing -> []
+            Just power ->
+              [ PayMilitaryCandidate
+                  { payMilitaryCandidateName = source
+                  , payMilitaryCandidateReduction = payMilitaryReduction power
+                  , payMilitaryCandidatePreferContact = preferContact && source == "Contact Specialist"
+                  }
+              ]
+
+chooseCandidate :: Maybe PayMilitaryCandidate -> PayMilitaryCandidate -> Maybe PayMilitaryCandidate
+chooseCandidate Nothing candidate = Just candidate
+chooseCandidate (Just current) candidate
+  | payMilitaryCandidateReduction candidate > payMilitaryCandidateReduction current = Just candidate
+  | payMilitaryCandidateReduction candidate == payMilitaryCandidateReduction current
+      && payMilitaryCandidatePreferContact candidate
+      && not (payMilitaryCandidatePreferContact current) =
+      Just candidate
+  | otherwise = Just current
+
+bestMatchingPayMilitaryPower :: CardTypeInfo -> CardTypeInfo -> Maybe PayMilitaryPower
+bestMatchingPayMilitaryPower target source =
+  foldl choosePower Nothing (filter (payMilitaryPowerMatches target) (cardTypePayMilitaryPowers source))
+
+choosePower :: Maybe PayMilitaryPower -> PayMilitaryPower -> Maybe PayMilitaryPower
+choosePower Nothing power = Just power
+choosePower (Just current) power
+  | payMilitaryReduction power > payMilitaryReduction current = Just power
+  | otherwise = Just current
+
+payMilitaryPowerMatches :: CardTypeInfo -> PayMilitaryPower -> Bool
+payMilitaryPowerMatches target power =
+  case payMilitaryCondition power of
+    PayMilitaryAlien -> targetAlienGood
+    PayMilitaryRebel -> not targetAlienGood && "rebel" `Set.member` targetCategories
+    PayMilitaryChromosome -> not targetAlienGood && "chromosome" `Set.member` targetCategories
+    PayMilitaryNonAlien -> not targetAlienGood
   where
     targetAlienGood = cardTypeGoodKind target == Just 4
     targetCategories = cardTypeCategories target
-    matches source =
-      case Map.lookup source cardInfosByName of
-        Nothing -> False
-        Just info ->
-          (source /= "Contact Specialist" || "Contact Specialist" `elem` Map.findWithDefault [] pid (tableauCards state))
-            && diplomatMatches targetAlienGood targetCategories info
-
-diplomatMatches :: Bool -> Set Text -> CardTypeInfo -> Bool
-diplomatMatches targetAlienGood targetCategories info
-  | cardTypeHasAlienDiplomat info = targetAlienGood
-  | cardTypeHasRebelDiplomat info = not targetAlienGood && "rebel" `Set.member` targetCategories
-  | cardTypeHasChromosomeDiplomat info = not targetAlienGood && "chromosome" `Set.member` targetCategories
-  | cardTypeHasNoAlienDiplomat info = not targetAlienGood
-  | cardTypeHasAnyDiplomat info = not targetAlienGood
-  | otherwise = False
 
 paymentScript :: [Player] -> PaymentState -> Either Text KeldonScript
 paymentScript players state =

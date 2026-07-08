@@ -5,6 +5,8 @@ module Rftg.Parser.Common
   ( cardId
   , cardName
   , CardTypeInfo (..)
+  , PayMilitaryCondition (..)
+  , PayMilitaryPower (..)
   , ReviewSelection (..)
   , canonicalCardName
   , notificationObjects
@@ -70,6 +72,7 @@ data CardTypeInfo = CardTypeInfo
   , cardTypeHasRebelDiplomat :: Bool
   , cardTypeHasChromosomeDiplomat :: Bool
   , cardTypeHasAnyDiplomat :: Bool
+  , cardTypePayMilitaryPowers :: [PayMilitaryPower]
   , cardTypeHasTemporaryMilitaryDiscard :: Bool
   , cardTypeHasPrestigeMilitary :: Bool
   , cardTypeHasDiplomatBonus :: Bool
@@ -81,6 +84,19 @@ data ReviewSelection
   = ReviewDefault
   | ReviewByName Text
   | ReviewByPlayerId PlayerId
+  deriving stock (Eq, Show)
+
+data PayMilitaryCondition
+  = PayMilitaryNonAlien
+  | PayMilitaryAlien
+  | PayMilitaryRebel
+  | PayMilitaryChromosome
+  deriving stock (Eq, Show)
+
+data PayMilitaryPower = PayMilitaryPower
+  { payMilitaryCondition :: PayMilitaryCondition
+  , payMilitaryReduction :: Int
+  }
   deriving stock (Eq, Show)
 
 tableInfoObject :: Object -> Either Text Object
@@ -210,6 +226,7 @@ parseCardTypeInfos gamedatas =
             , cardTypeHasRebelDiplomat = diplomatHasRebel diplomat
             , cardTypeHasChromosomeDiplomat = diplomatHasChromosome diplomat
             , cardTypeHasAnyDiplomat = diplomatHasAny diplomat
+            , cardTypePayMilitaryPowers = diplomatPayMilitaryPowers diplomat
             , cardTypeHasTemporaryMilitaryDiscard = hasTemporaryMilitaryDiscard
             , cardTypeHasPrestigeMilitary = hasPrestigeMilitary
             , cardTypeHasDiplomatBonus = hasDiplomatBonus
@@ -261,6 +278,7 @@ data DiplomatInfo = DiplomatInfo
   , diplomatHasRebel :: Bool
   , diplomatHasChromosome :: Bool
   , diplomatHasAny :: Bool
+  , diplomatPayMilitaryPowers :: [PayMilitaryPower]
   }
   deriving stock (Eq, Show)
 
@@ -279,7 +297,7 @@ cardTypeDiplomatInfo obj =
     Just _ -> Left "card type powers is not an object"
 
 emptyDiplomatInfo :: DiplomatInfo
-emptyDiplomatInfo = DiplomatInfo False False False False False
+emptyDiplomatInfo = DiplomatInfo False False False False False []
 
 diplomatInfoFromPowers :: Value -> Either Text DiplomatInfo
 diplomatInfoFromPowers value =
@@ -299,20 +317,54 @@ diplomatInfoFromPowers value =
                   alien = optionalBoolFlag "alien" power
                   rebel = optionalBoolFlag "rebel" power
                   chromosome = optionalBoolFlag "chromosome" power
+              payMilitaryPower <- payMilitaryPowerFromDiplomat power noAlien alien rebel chromosome
               pure info
                 { diplomatHasNoAlien = diplomatHasNoAlien info || noAlien
                 , diplomatHasAlien = diplomatHasAlien info || alien
                 , diplomatHasRebel = diplomatHasRebel info || rebel
                 , diplomatHasChromosome = diplomatHasChromosome info || chromosome
                 , diplomatHasAny = diplomatHasAny info || not noAlien && not alien && not rebel && not chromosome
+                , diplomatPayMilitaryPowers = diplomatPayMilitaryPowers info <> [payMilitaryPower]
                 }
         Nothing -> pure info
+
+payMilitaryPowerFromDiplomat :: Object -> Bool -> Bool -> Bool -> Bool -> Either Text PayMilitaryPower
+payMilitaryPowerFromDiplomat power noAlien alien rebel chromosome = do
+  condition <-
+    case filter snd
+      [ (PayMilitaryNonAlien, noAlien)
+      , (PayMilitaryAlien, alien)
+      , (PayMilitaryRebel, rebel)
+      , (PayMilitaryChromosome, chromosome)
+      ] of
+      [] -> pure PayMilitaryNonAlien
+      [(condition, _)] -> pure condition
+      matches ->
+        Left
+          ( "card type diplomat has multiple pay-military conditions: "
+              <> Text.intercalate ", " (fmap (showText . fst) matches)
+          )
+  rawDiscount <- optionalIntDefault 0 "card type diplomat discount" "discount" power
+  if rawDiscount > 0
+    then Left ("card type diplomat discount is positive: " <> showText rawDiscount)
+    else
+      pure PayMilitaryPower
+        { payMilitaryCondition = condition
+        , payMilitaryReduction = negate rawDiscount
+        }
 
 optionalBoolFlag :: Text -> Object -> Bool
 optionalBoolFlag name obj =
   case optionalField name obj of
     Just (Bool True) -> True
     _ -> False
+
+optionalIntDefault :: Int -> Text -> Text -> Object -> Either Text Int
+optionalIntDefault defaultValue label name obj =
+  case optionalField name obj of
+    Nothing -> pure defaultValue
+    Just Null -> pure defaultValue
+    Just value -> intValue label value
 
 temporaryMilitaryDiscardPowers :: Set Text
 temporaryMilitaryDiscardPowers =

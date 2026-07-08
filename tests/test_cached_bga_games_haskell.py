@@ -109,6 +109,17 @@ class HaskellCachedBgaGameRegression(unittest.TestCase):
         if failures:
             self.fail("\n".join(failures))
 
+    def test_rebel_pay_military_uses_strongest_matching_source(self):
+        game = FIXTURE_DIR / "866716815.json"
+        script_text = haskell_parser.parse_file(game, USER_NAME)
+        script_lines = script_text.splitlines()
+        place_line = script_lines.index('choice 1 PLACE "Rebel Warrior Race"')
+
+        self.assertEqual(
+            script_lines[place_line + 1],
+            'choice? 1 PAYMENT none : "Rebel Alliance"',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

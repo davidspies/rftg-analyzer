@@ -195,9 +195,17 @@ static void gen_make_choice(game *g, int who, int type, int list[], int *nl,
 		case CHOICE_SEARCH_TYPE:
 		case CHOICE_SEARCH_KEEP:
 		case CHOICE_OORT_KIND:
-		case CHOICE_TAKEOVER:
 			sprintf(tmp, " %d", rv);
 			strcat(buf, tmp);
+			break;
+
+		case CHOICE_TAKEOVER:
+			cat_card(buf, g, rv);
+			if (rv >= 0)
+			{
+				strcat(buf, " :");
+				cat_card(buf, g, a_special[0]);
+			}
 			break;
 
 		case CHOICE_CONSUME:

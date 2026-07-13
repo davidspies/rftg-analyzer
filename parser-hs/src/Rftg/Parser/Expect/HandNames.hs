@@ -28,7 +28,8 @@ import Rftg.Bga.Json
   , valueText
   )
 import Rftg.Bga.State
-  ( BgaState
+  ( BgaSettleState (..)
+  , BgaState (..)
   , bgaStateIsExploreStart
   , bgaStateIsNewActionRound
   , bgaStateIsSearch
@@ -52,12 +53,14 @@ import Rftg.Keldon.Script
   )
 import Rftg.Parser.CardIndex
   ( CardIndex (..)
+  , applyTakeoverCardMove
   , cardsFromNotification
   , cardsPlayerId
   , discardCardIds
   , initialCardIndex
   , learnNotificationCards
   , lookupKnownCardName
+  , takeoverCardMove
   )
 import Rftg.Parser.Common
   ( CardTypeInfo (..)
@@ -101,6 +104,7 @@ data HandNameTarget
   | TargetConsumeHand [Text]
   | TargetPlace Text
   | TargetPayment [Text]
+  | TargetDefense [Text]
   | TargetSettle Text
   deriving stock (Eq, Show)
 
@@ -224,6 +228,7 @@ handNamesStep players cardInfosByName cardTypes state (eventIx, notification) = 
     "discard" -> handleDiscard players eventIx stateWithCards notification
     "mercenary_used" -> handleMercenaryUsed stateWithCards notification
     "playcard" -> handlePlayCard players cardInfosByName cardTypes eventIx stateWithCards notification
+    "takeover" -> handleTakeover cardTypes stateWithCards notification
     "explored_choice" -> handleExploredChoice cardTypes stateWithCards notification
     "keepcards" -> handleKeepCards players cardTypes eventIx stateWithCards notification
     "drawCards" -> handleDrawCards stateWithCards notification
@@ -237,6 +242,12 @@ handNamesStep players cardInfosByName cardTypes state (eventIx, notification) = 
     "scavengeFromExplore" -> handleScavengerUpdate players stateWithCards notification
     _ -> pure stateWithCards
 
+handleTakeover :: Map Int Text -> HandNamesState -> Object -> Either Text HandNamesState
+handleTakeover cardTypes state notification = do
+  move <- takeoverCardMove cardTypes notification
+  movedTableau <- applyTakeoverCardMove move (tableauCards state)
+  pure state { tableauCards = movedTableau }
+
 handleGameState :: [Player] -> Map Int Text -> Int -> HandNamesState -> Object -> Either Text HandNamesState
 handleGameState players cardTypes eventIx state notification = do
   args <- objectField "args" notification
@@ -248,14 +259,53 @@ handleGameState players cardTypes eventIx state notification = do
         if bgaStateIsSearch bgaState
           then pure state
           else finishActiveSearch state
+      stateBeforeTakeover <-
+        case bgaState of
+          BgaSettleState BgaSettleTakeoverPrevent ->
+            flushTakeoverPayment eventIx args stateBeforeEnter
+          BgaSettleState BgaSettleTakeoverResolution ->
+            flushTakeoverDefenses eventIx stateBeforeEnter
+          _ -> pure stateBeforeEnter
       stateBeforeAdvance <-
         if bgaStateIsNewActionRound bgaState
-          then flushAllPending players eventIx stateBeforeEnter
-          else pure stateBeforeEnter
+          then flushAllPending players eventIx stateBeforeTakeover
+          else pure stateBeforeTakeover
       advanced <- enterState players bgaState args stateBeforeAdvance
       if bgaStateIsExploreStart bgaState
         then flushPendingExplores cardTypes advanced
         else pure advanced
+
+flushTakeoverPayment :: Int -> Object -> HandNamesState -> Either Text HandNamesState
+flushTakeoverPayment eventIx outerArgs state = do
+  args <- objectField "args" outerArgs
+  pid <- PlayerId <$> (intValue "takeover player_id" =<< field "player_id" args)
+  let mercenaries = Map.findWithDefault [] pid (pendingMercenaries state)
+  case (mercenaries, Map.lookup pid (pendingDiscards state)) of
+    ([], _) -> pure state
+    (_, Nothing) ->
+      Left ("takeover payment for player " <> showText (unPlayerId pid) <> " has mercenary powers but no discards")
+    (_, Just pending) -> do
+      order <- cursorChoiceOrder (phaseCursor state) eventIx
+      withExpectation <- emitHandNames order pid (TargetPayment (pendingDiscardCards pending)) state
+      pure (removeReviewCards pid (pendingDiscardIds pending) withExpectation)
+        { pendingMercenaries = Map.delete pid (pendingMercenaries withExpectation)
+        , pendingDiscards = Map.delete pid (pendingDiscards withExpectation)
+        }
+
+flushTakeoverDefenses :: Int -> HandNamesState -> Either Text HandNamesState
+flushTakeoverDefenses eventIx state =
+  foldM flushOne state (Map.keys (pendingMercenaries state))
+  where
+    flushOne current pid =
+      case Map.lookup pid (pendingDiscards current) of
+        Nothing -> pure current
+        Just pending -> do
+          order <- cursorChoiceOrder (phaseCursor current) eventIx
+          withExpectation <- emitHandNames order pid (TargetDefense (pendingDiscardCards pending)) current
+          pure (removeReviewCards pid (pendingDiscardIds pending) withExpectation)
+            { pendingMercenaries = Map.delete pid (pendingMercenaries withExpectation)
+            , pendingDiscards = Map.delete pid (pendingDiscards withExpectation)
+            }
 
 enterState :: [Player] -> BgaState -> Object -> HandNamesState -> Either Text HandNamesState
 enterState players bgaState args state
@@ -675,22 +725,25 @@ handleConsumeCard cardInfosByName eventIx state notification = do
       applyPendingConsumeHandDraw pid withConsumeHand
 
 handleConsume :: [Player] -> Map Text CardTypeInfo -> Int -> HandNamesState -> Object -> Either Text HandNamesState
-handleConsume players cardInfosByName eventIx state notification = do
-  args <- objectField "args" notification
-  case optionalField "player_id" args of
-    Nothing -> pure state
-    Just pidValue -> do
-      pid <- PlayerId <$> intValue "consume player_id" pidValue
-      _ <- lookupPlayer players pid
-      case optionalField "world_id" args of
-        Just worldIdValue -> do
-          powerId <- intValue "consume world_id" worldIdValue
-          power <- lookupKnownCardName (cardIndex state) powerId
-          powerInfo <- lookupCardInfo cardInfosByName power
-          if cardTypeHasGoodForSettleCost powerInfo && cursorPhase (phaseCursor state) == Settle
-            then pure state
-            else flushPendingDiscard players eventIx pid state
-        Nothing -> flushPendingDiscard players eventIx pid state
+handleConsume players cardInfosByName eventIx state notification =
+  if currentBgaState state == Just (BgaSettleState BgaSettleTakeoverDefenderBoost)
+    then pure state
+    else do
+      args <- objectField "args" notification
+      case optionalField "player_id" args of
+        Nothing -> pure state
+        Just pidValue -> do
+          pid <- PlayerId <$> intValue "consume player_id" pidValue
+          _ <- lookupPlayer players pid
+          case optionalField "world_id" args of
+            Just worldIdValue -> do
+              powerId <- intValue "consume world_id" worldIdValue
+              power <- lookupKnownCardName (cardIndex state) powerId
+              powerInfo <- lookupCardInfo cardInfosByName power
+              if cardTypeHasGoodForSettleCost powerInfo && cursorPhase (phaseCursor state) == Settle
+                then pure state
+                else flushPendingDiscard players eventIx pid state
+            Nothing -> flushPendingDiscard players eventIx pid state
 
 handleGoodProduction :: Map Text CardTypeInfo -> HandNamesState -> Object -> Either Text HandNamesState
 handleGoodProduction cardInfosByName state notification = do
@@ -948,6 +1001,7 @@ targetMatches target line =
     (TargetConsumeHand cards, Choice _ _ (ChooseConsumeHand actual)) -> cards == actual
     (TargetPlace card, Choice _ _ (ChoosePlace (Just actual))) -> card == actual
     (TargetPayment cards, Choice _ _ (ChoosePayment actual _specials)) -> cards == actual
+    (TargetDefense cards, Choice _ _ (ChooseDefend actual _specials)) -> cards == actual
     (TargetSettle card, Choice _ _ (ChooseSettle (Just actual))) -> card == actual
     _ -> False
 

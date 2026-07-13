@@ -59,6 +59,7 @@ data CardTypeInfo = CardTypeInfo
   , cardTypePhase3MilitaryForces :: [Int]
   , cardTypeHasSixDevScoring :: Bool
   , cardTypeHasTakeoverSearchPower :: Bool
+  , cardTypeHasTakeoverPrevention :: Bool
   , cardTypeHasWindfallProduceIfDiscard :: Bool
   , cardTypeHasDiscardPrestige :: Bool
   , cardTypeHasSettleReplace :: Bool
@@ -191,7 +192,8 @@ parseCardTypeInfos gamedatas =
               Nothing -> False
               Just _ -> True
       hasTakeoverSearchPower <- cardTypeHasAnyPower takeoverSearchPowers obj
-      hasDiscardProduce <- cardTypeHasPower "windfallproduceifdiscard" obj
+      hasTakeoverPrevention <- cardTypeHasPower "blocktakeover" obj
+      hasDiscardProduce <- cardTypeHasAnyPower discardProducePowers obj
       hasDiscardPrestige <- cardTypeHasConsumeCardPrestige obj
       hasSettleReplace <- cardTypeHasPower "settlereplace" obj
       hasConsumeForSell <- cardTypeHasPowerInPhase "4" "consumeforsell" obj
@@ -213,6 +215,7 @@ parseCardTypeInfos gamedatas =
             , cardTypePhase3MilitaryForces = militaryForces
             , cardTypeHasSixDevScoring = hasSixDevScoring
             , cardTypeHasTakeoverSearchPower = hasTakeoverSearchPower
+            , cardTypeHasTakeoverPrevention = hasTakeoverPrevention
             , cardTypeHasWindfallProduceIfDiscard = hasDiscardProduce
             , cardTypeHasDiscardPrestige = hasDiscardPrestige
             , cardTypeHasSettleReplace = hasSettleReplace
@@ -404,6 +407,13 @@ takeoverSearchPowers =
     , "discardtotakeover"
     , "blocktakeover"
     , "cloaking"
+    ]
+
+discardProducePowers :: Set Text
+discardProducePowers =
+  Set.fromList
+    [ "produceifdiscard"
+    , "windfallproduceifdiscard"
     ]
 
 cardTypePhase3MilitaryForcesFrom :: Object -> Either Text [Int]

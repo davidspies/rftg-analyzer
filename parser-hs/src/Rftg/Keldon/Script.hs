@@ -78,6 +78,9 @@ data KeldonChoice
   | ChooseDiscardPrestige Text
   | ChooseSearchType Int
   | ChooseSearchKeep Int
+  | ChooseTakeover (Maybe (Text, Text))
+  | ChooseDefend [Text] [Text]
+  | ChooseTakeoverPrevent (Maybe (Text, Text))
   | ChooseProduce Text Int
   | ChooseDiscardProduce Text Text
   | ChooseSettle (Maybe Text)
@@ -229,6 +232,16 @@ renderChoice choice =
       "SEARCH_TYPE " <> showText category
     ChooseSearchKeep keep ->
       "SEARCH_KEEP " <> showText keep
+    ChooseTakeover Nothing ->
+      "TAKEOVER none"
+    ChooseTakeover (Just (target, power)) ->
+      "TAKEOVER " <> quoteCard target <> " : " <> quoteCard power
+    ChooseDefend cards specials ->
+      "DEFEND " <> renderCardLists cards specials
+    ChooseTakeoverPrevent Nothing ->
+      "TAKEOVER_PREVENT none"
+    ChooseTakeoverPrevent (Just (target, power)) ->
+      "TAKEOVER_PREVENT " <> quoteCard target <> " : " <> quoteCard power
     ChooseProduce card powerIndex ->
       "PRODUCE " <> quoteCard card <> " " <> showText powerIndex
     ChooseDiscardProduce discard world ->
@@ -252,9 +265,12 @@ renderChoice choice =
     ChoosePlace (Just card) ->
       "PLACE " <> quoteCard card
     ChoosePayment cards specials ->
-      "PAYMENT "
-        <> (if null cards then "none" else Text.unwords (fmap quoteCard cards))
-        <> (if null specials then "" else " : " <> Text.unwords (fmap quoteCard specials))
+      "PAYMENT " <> renderCardLists cards specials
+
+renderCardLists :: [Text] -> [Text] -> Text
+renderCardLists cards specials =
+  (if null cards then "none" else Text.unwords (fmap quoteCard cards))
+    <> (if null specials then "" else " : " <> Text.unwords (fmap quoteCard specials))
 
 choicePrefix :: ChoiceMode -> Text
 choicePrefix Required = "choice"

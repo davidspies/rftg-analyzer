@@ -120,6 +120,33 @@ class HaskellCachedBgaGameRegression(unittest.TestCase):
             'choice? 1 PAYMENT none : "Rebel Alliance"',
         )
 
+    def test_takeover_and_futile_defense_are_scripted(self):
+        game = FIXTURE_DIR / "882143731.json"
+        script_lines = haskell_parser.parse_file(game, USER_NAME).splitlines()
+
+        self.assertIn(
+            'choice? 1 TAKEOVER "Alien Booby Trap" : "Rebel Sneak Attack"',
+            script_lines,
+        )
+        self.assertIn(
+            'choice 0 DEFEND none : "Alien Booby Trap"',
+            script_lines,
+        )
+
+    def test_non_windfall_discard_produce_is_scripted(self):
+        game = FIXTURE_DIR / "882143731.json"
+        script_lines = haskell_parser.parse_file(game, USER_NAME).splitlines()
+
+        self.assertIn(
+            'choice? 1 PRODUCE "Damaged Alien Factory" -1',
+            script_lines,
+        )
+        self.assertIn(
+            'choice? 1 DISCARD_PRODUCE "Primitive Rebel World" : '
+            '"Damaged Alien Factory"',
+            script_lines,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

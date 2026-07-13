@@ -70,9 +70,14 @@ Body, in per-player order (interleaving between players is free):
     choice 0 SEARCH_TYPE 2
     choice 0 SEARCH_KEEP 1
     choice 0 OORT_KIND 1
+    choice 0 TAKEOVER "Target World" : "Takeover Power"
+    choice 0 DEFEND "Discarded Card" : "Defense Power"
+    choice 0 TAKEOVER_PREVENT "Target World" : "Takeover Power"
 
-Not yet supported: TAKEOVER target selection, DEFEND,
-TAKEOVER_PREVENT (the analyzer dies loudly if a script contains them).
+TAKEOVER uses `target : power`; DEFEND uses `cards : powers`; and
+TAKEOVER_PREVENT uses `target : takeover-power`.  `none` declines any of
+these choices.  They replay exactly, but the analyzer does not yet score
+their alternatives.
 
 ## Hidden information
 
@@ -97,7 +102,9 @@ replays each to the identical final score.
   and PLACE handlers), `ai_eval_choice` (generic candidate scorer).
 - `engine.c`: `draw_hook`; campaign draws resolve lazily by design and
   rotate with players; random draws avoid scripted-demand starvation;
-  good-swap recovery; `flip_world` routed through `campaign_draw`.
+  good-swap recovery; `flip_world` routed through `campaign_draw`;
+  takeover-discard goal loss and replay-only futile defenses.
 - `init.c`: lazy campaign entries (`-2`) instead of failing on
   duplicate designs.
-- `rftg.h`: declarations; `campaign_status.order_d`.
+- `rftg.h`: declarations; `campaign_status.order_d`; replay-controller
+  takeover-defense capability.

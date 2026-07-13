@@ -59,10 +59,12 @@ import Rftg.Keldon.Script
 import Rftg.Parser.Action (parseActions)
 import Rftg.Parser.CardIndex
   ( CardIndex (..)
+  , applyTakeoverCardMove
   , discardCardIds
   , initialCardIndex
   , learnNotificationCards
   , lookupKnownCardName
+  , takeoverCardMove
   )
 import Rftg.Parser.Common
   ( cardId
@@ -240,6 +242,7 @@ expectStep cardTypes state notification = do
     "keepcards" -> handleKeepCards stateWithCards notification
     "discard" -> handleDiscard stateWithCards notification
     "playcard" -> handlePlayCard cardTypes stateWithCards notification
+    "takeover" -> handleTakeover cardTypes stateWithCards notification
     "discardfromtableau" -> handleDiscardFromTableau stateWithCards notification
     "goodproduction" -> handleGoodProduction stateWithCards notification
     "consume" -> handleConsume stateWithCards notification
@@ -249,6 +252,12 @@ expectStep cardTypes state notification = do
     "drawCards_def" -> handleDrawCardsDef stateWithCards notification
     "explored_choice_log" -> handleExploredChoiceLog stateWithCards notification
     _ -> pure stateWithCards
+
+handleTakeover :: Map Int Text -> ExpectState -> Object -> Either Text ExpectState
+handleTakeover cardTypes state notification = do
+  move <- takeoverCardMove cardTypes notification
+  movedTableau <- applyTakeoverCardMove move (tableauCards state)
+  pure state { tableauCards = movedTableau }
 
 handleGameState :: ExpectState -> Object -> Either Text ExpectState
 handleGameState state notification = do

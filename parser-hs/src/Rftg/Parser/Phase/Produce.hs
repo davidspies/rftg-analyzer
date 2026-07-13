@@ -211,28 +211,28 @@ handleGoodProduction players cardInfosByName eventIx state notification = do
       let stateWithGood = state { activeGoods = Map.insert goodId worldId (activeGoods state) }
       worldName <- lookupKnownCardName (cardIndex stateWithGood) worldId
       worldInfo <- lookupCardInfo cardInfosByName worldName
-      if not (cardIsWindfall worldInfo)
-        then pure stateWithGood
-        else case currentRound stateWithGood of
-          Nothing -> pure stateWithGood
-          Just roundIndex -> do
-            discardProduce <- discardProduceSource cardInfosByName stateWithGood args
-            case discardProduce of
-              Just source -> emitDiscardProduce players eventIx stateWithGood source worldName
-              Nothing -> do
-                owner <- productionOwner players stateWithGood worldId args
-                let reason = valueText <$> optionalField "windfallreason" args
-                    item =
-                      WindfallItem
-                        { windfallRound = roundIndex
-                        , windfallWorld = worldName
-                        , windfallReason = reason
-                        , windfallSeq = bufferLength owner stateWithGood
-                        }
-                pure stateWithGood
-                  { windfallBuffers =
-                      Map.alter (appendBuffer item) owner (windfallBuffers stateWithGood)
-                  }
+      discardProduce <- discardProduceSource cardInfosByName stateWithGood args
+      case discardProduce of
+        Just source -> emitDiscardProduce players eventIx stateWithGood source worldName
+        Nothing
+          | not (cardIsWindfall worldInfo) -> pure stateWithGood
+          | otherwise ->
+              case currentRound stateWithGood of
+                Nothing -> pure stateWithGood
+                Just roundIndex -> do
+                  owner <- productionOwner players stateWithGood worldId args
+                  let reason = valueText <$> optionalField "windfallreason" args
+                      item =
+                        WindfallItem
+                          { windfallRound = roundIndex
+                          , windfallWorld = worldName
+                          , windfallReason = reason
+                          , windfallSeq = bufferLength owner stateWithGood
+                          }
+                  pure stateWithGood
+                    { windfallBuffers =
+                        Map.alter (appendBuffer item) owner (windfallBuffers stateWithGood)
+                    }
 
 cardIsWindfall :: CardTypeInfo -> Bool
 cardIsWindfall info =

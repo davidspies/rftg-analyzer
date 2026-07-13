@@ -91,6 +91,11 @@ data BgaSettleState
   = BgaSettleMain
   | BgaSettleDiscardToPutGood
   | BgaSettleTakeoverCheck
+  | BgaSettleTakeoverPrevent
+  | BgaSettleTakeoverAttackerBoost
+  | BgaSettleTakeoverNextBoost
+  | BgaSettleTakeoverDefenderBoost
+  | BgaSettleTakeoverResolution
   | BgaSettleProcess
   | BgaSettleDiscard
   | BgaSettleImprovedLogistics
@@ -162,6 +167,11 @@ bgaStateFromId (StateId raw) =
     41 -> pure (BgaSettleState BgaSettleDiscardToPutGood)
     42 -> pure (BgaSettleState BgaSettleImprovedLogistics)
     43 -> pure (BgaSettleState BgaSettleTakeoverCheck)
+    44 -> pure (BgaSettleState BgaSettleTakeoverAttackerBoost)
+    45 -> pure (BgaSettleState BgaSettleTakeoverDefenderBoost)
+    46 -> pure (BgaSettleState BgaSettleTakeoverResolution)
+    48 -> pure (BgaSettleState BgaSettleTakeoverNextBoost)
+    49 -> pure (BgaSettleState BgaSettleTakeoverPrevent)
     50 -> pure (BgaConsumeState BgaConsumeSell)
     51 -> pure (BgaConsumeState BgaConsumeMain)
     52 -> pure (BgaConsumeState BgaConsumeProcess)
@@ -214,6 +224,11 @@ bgaStateId state =
     BgaSettleState BgaSettleDiscardToPutGood -> StateId 41
     BgaSettleState BgaSettleImprovedLogistics -> StateId 42
     BgaSettleState BgaSettleTakeoverCheck -> StateId 43
+    BgaSettleState BgaSettleTakeoverPrevent -> StateId 49
+    BgaSettleState BgaSettleTakeoverAttackerBoost -> StateId 44
+    BgaSettleState BgaSettleTakeoverNextBoost -> StateId 48
+    BgaSettleState BgaSettleTakeoverDefenderBoost -> StateId 45
+    BgaSettleState BgaSettleTakeoverResolution -> StateId 46
     BgaSettleState BgaSettleProcess -> StateId 241
     BgaSettleState BgaSettleRebelSneakAttack -> StateId 242
     BgaSettleState BgaSettleDiscard -> StateId 341

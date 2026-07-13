@@ -28,7 +28,10 @@ import Rftg.Bga.Json
   , valueText
   )
 import Rftg.Bga.State
-  ( BgaState
+  ( BgaPhase (..)
+  , BgaSettleState (..)
+  , BgaState (..)
+  , bgaStateHasPhase
   , bgaStateIsTerraformingEngineers
   , optionalBgaStateField
   )
@@ -48,10 +51,12 @@ import Rftg.Keldon.Script
   )
 import Rftg.Parser.CardIndex
   ( CardIndex (..)
+  , applyTakeoverCardMove
   , discardCardIds
   , initialCardIndex
   , learnNotificationCards
   , lookupKnownCardName
+  , takeoverCardMove
   )
 import Rftg.Parser.Common
   ( CardTypeInfo (..)
@@ -109,11 +114,13 @@ data PaymentState = PaymentState
   , startSeen :: Bool
   , tableauCards :: Map PlayerId [Text]
   , cardCosts :: Map Int CardCostInfo
-  , pendingTableauPayments :: Map PlayerId [Text]
+  , pendingTableauPayments :: Map PlayerId [(Int, Text)]
   , pendingMercenaries :: Map PlayerId [Text]
   , pendingDiscards :: Map PlayerId PendingDiscard
   , pendingZeroPaymentWorlds :: Map PlayerId Text
   , pendingUpgrades :: Map PlayerId Text
+  , pendingTakeoverPlayers :: Set PlayerId
+  , pendingTakeoverSpecials :: Map PlayerId [Text]
   , discardedTableauCards :: Set Int
   , playedCards :: Set Int
   , paymentLines :: [PaymentLine]
@@ -150,6 +157,8 @@ emptyPaymentState players startingCardIndex = PaymentState
   , pendingDiscards = Map.empty
   , pendingZeroPaymentWorlds = Map.empty
   , pendingUpgrades = Map.empty
+  , pendingTakeoverPlayers = Set.empty
+  , pendingTakeoverSpecials = Map.empty
   , discardedTableauCards = Set.empty
   , playedCards = Set.empty
   , paymentLines = []
@@ -166,28 +175,85 @@ paymentStep players cardInfosByName cardTypes state (eventIx, notification) = do
   updatedCardIndex <- learnNotificationCards cardTypes (cardIndex state) notification
   let stateWithCards = state { cardIndex = updatedCardIndex }
   case notificationType notification of
-    "gameStateChange" -> handleGameState stateWithCards notification
+    "gameStateChange" -> handleGameState players eventIx stateWithCards notification
     "showTableau" -> handleShowTableau cardTypes stateWithCards notification
     "cardcost" -> handleCardCost stateWithCards notification
     "discard" -> handleDiscard stateWithCards notification
     "discardfromtableau" -> handleDiscardFromTableau cardInfosByName stateWithCards notification
+    "confirmTakeover" -> handleConfirmTakeover stateWithCards notification
     "mercenary_used" -> handleMercenaryUsed stateWithCards notification
     "playcard" -> handlePlayCard players cardInfosByName cardTypes eventIx stateWithCards notification
+    "takeover" -> handleTakeover cardTypes stateWithCards notification
     "consume" -> handleSettleCostConsume players cardInfosByName stateWithCards notification
     "updatePrestige" -> handleUpdatePrestige cardInfosByName stateWithCards notification
     _ -> pure stateWithCards
 
-handleGameState :: PaymentState -> Object -> Either Text PaymentState
-handleGameState state notification = do
+handleTakeover :: Map Int Text -> PaymentState -> Object -> Either Text PaymentState
+handleTakeover cardTypes state notification = do
+  move <- takeoverCardMove cardTypes notification
+  movedTableau <- applyTakeoverCardMove move (tableauCards state)
+  pure state { tableauCards = movedTableau }
+
+handleGameState :: [Player] -> Int -> PaymentState -> Object -> Either Text PaymentState
+handleGameState players eventIx state notification = do
   args <- objectField "args" notification
   maybeBgaState <- optionalBgaStateField "gameStateChange id" args
   case maybeBgaState of
     Nothing -> pure state
-    Just bgaState ->
-      pure state
-        { phaseCursor = advancePhaseCursor bgaState (phaseCursor state)
+    Just bgaState -> do
+      stateBeforeEnter <-
+        case bgaState of
+          BgaSettleState BgaSettleTakeoverPrevent ->
+            flushTakeoverPayment players eventIx args state
+          _ -> pure state
+      let stateForPhase =
+            if bgaStateHasPhase BgaSettle bgaState
+              then stateBeforeEnter
+              else stateBeforeEnter
+                { pendingTakeoverPlayers = Set.empty
+                , pendingTakeoverSpecials = Map.empty
+                }
+      pure stateForPhase
+        { phaseCursor = advancePhaseCursor bgaState (phaseCursor stateForPhase)
         , currentBgaState = Just bgaState
         }
+
+flushTakeoverPayment :: [Player] -> Int -> Object -> PaymentState -> Either Text PaymentState
+flushTakeoverPayment players eventIx outerArgs state = do
+  args <- objectField "args" outerArgs
+  pid <- PlayerId <$> (intValue "takeover player_id" =<< field "player_id" args)
+  _ <- lookupPlayer players pid
+  powerId <- intValue "takeover player_just_played" =<< field "player_just_played" args
+  let mercenaries = Map.findWithDefault [] pid (pendingMercenaries state)
+      pendingMoney =
+        if null mercenaries
+          then Nothing
+          else Map.lookup pid (pendingDiscards state)
+      money = maybe [] pendingDiscardCards pendingMoney
+      tableauSpecials =
+        [ name
+        | (cardId_, name) <- Map.findWithDefault [] pid (pendingTableauPayments state)
+        , cardId_ /= powerId
+        ]
+      specials =
+        unique
+          ( mercenaries
+              <> tableauSpecials
+              <> Map.findWithDefault [] pid (pendingTakeoverSpecials state)
+          )
+      cleared = state
+        { pendingMercenaries = Map.delete pid (pendingMercenaries state)
+        , pendingDiscards =
+            if null mercenaries
+              then pendingDiscards state
+              else Map.delete pid (pendingDiscards state)
+        , pendingTableauPayments = Map.delete pid (pendingTableauPayments state)
+        , pendingTakeoverPlayers = Set.delete pid (pendingTakeoverPlayers state)
+        , pendingTakeoverSpecials = Map.delete pid (pendingTakeoverSpecials state)
+        }
+  if null money && null specials
+    then pure cleared
+    else addPaymentLine players eventIx pid Required money specials cleared
 
 handleShowTableau :: Map Int Text -> PaymentState -> Object -> Either Text PaymentState
 handleShowTableau cardTypes state notification = do
@@ -205,6 +271,13 @@ handleShowTableau cardTypes state notification = do
       pure (pid, name)
     addEntry table (pid, name) =
       Map.alter (Just . appendUnique name . maybe [] id) pid table
+
+handleConfirmTakeover :: PaymentState -> Object -> Either Text PaymentState
+handleConfirmTakeover state notification = do
+  args <- objectField "args" notification
+  powerId <- intValue "confirmTakeover takeovercard_id" =<< field "takeovercard_id" args
+  pid <- lookupCardOwner powerId state
+  pure state { pendingTakeoverPlayers = Set.insert pid (pendingTakeoverPlayers state) }
 
 handleCardCost :: PaymentState -> Object -> Either Text PaymentState
 handleCardCost state notification = do
@@ -247,7 +320,9 @@ optionalBoolDefault defaultValue label name obj =
 
 handleDiscard :: PaymentState -> Object -> Either Text PaymentState
 handleDiscard state notification =
-  if cursorPhase (phaseCursor state) `elem` [Explore, Discard, Produce]
+  if inTakeoverDefenderBoost state
+    then pure state
+    else if cursorPhase (phaseCursor state) `elem` [Explore, Discard, Produce]
     then pure state
     else do
       args <- objectField "args" notification
@@ -287,30 +362,33 @@ handleDiscardFromTableau cardInfosByName state notification = do
                 { discardedTableauCards = Set.insert cardInstanceId (discardedTableauCards state)
                 , tableauCards = Map.adjust (filter (/= name)) owner (tableauCards state)
                 }
-          if not (startSeen stateWithoutCard)
-            then pure stateWithoutCard
-            else if cardTypeType info == "world"
-              && (maybe False bgaStateIsTerraformingEngineers (currentBgaState state) || not (cardTypeIsSettlePaymentDiscardSource info))
-            then
-              pure stateWithoutCard
-                { pendingUpgrades = Map.insert owner name (pendingUpgrades stateWithoutCard)
-                }
-            else
-              pure stateWithoutCard
-                { pendingTableauPayments =
-                    Map.alter (Just . (<> [name]) . maybe [] id) owner (pendingTableauPayments stateWithoutCard)
-                }
+          case () of
+            _
+              | not (startSeen stateWithoutCard) -> pure stateWithoutCard
+              | cardTypeType info == "world"
+                  && (maybe False bgaStateIsTerraformingEngineers (currentBgaState state) || not (cardTypeIsSettlePaymentDiscardSource info)) ->
+                  pure stateWithoutCard
+                    { pendingUpgrades = Map.insert owner name (pendingUpgrades stateWithoutCard)
+                    }
+              | otherwise ->
+                  pure stateWithoutCard
+                    { pendingTableauPayments =
+                        Map.alter (Just . (<> [(cardInstanceId, name)]) . maybe [] id) owner (pendingTableauPayments stateWithoutCard)
+                    }
 
 handleMercenaryUsed :: PaymentState -> Object -> Either Text PaymentState
-handleMercenaryUsed state notification = do
-  args <- objectField "args" notification
-  sourceId <- intValue "mercenary_used card" =<< field "card" args
-  sourceName <- lookupKnownCardName (cardIndex state) sourceId
-  owner <- lookupCardOwner sourceId state
-  pure state
-    { pendingMercenaries =
-        Map.alter (Just . appendUnique sourceName . maybe [] id) owner (pendingMercenaries state)
-    }
+handleMercenaryUsed state notification =
+  if inTakeoverDefenderBoost state
+    then pure state
+    else do
+      args <- objectField "args" notification
+      sourceId <- intValue "mercenary_used card" =<< field "card" args
+      sourceName <- lookupKnownCardName (cardIndex state) sourceId
+      owner <- lookupCardOwner sourceId state
+      pure state
+        { pendingMercenaries =
+            Map.alter (Just . appendUnique sourceName . maybe [] id) owner (pendingMercenaries state)
+        }
 
 handlePlayCard ::
   [Player] ->
@@ -369,7 +447,7 @@ handlePaidPlayCard players cardInfosByName cardTypes eventIx state args cardValu
             if null merc && cardTypeIsMilitary cardInfo && (not (null allMoney) || maybe False (not . cardCostMilitaryForce) cc)
               then payMilitarySource pid cardInfo (maybe False cardCostUseContactSpecialist cc) state cardInfosByName
               else Nothing
-          tableauPay = unique (Map.findWithDefault [] pid (pendingTableauPayments state))
+          tableauPay = unique (fmap snd (Map.findWithDefault [] pid (pendingTableauPayments state)))
           specials = unique (merc <> maybe [] (: []) paySource <> tableauPay)
           mode = if null allMoney then Optional else Required
           stateCleared = state
@@ -418,19 +496,24 @@ handlePaymentSpecialPlayCard players cardInfosByName state notification _args _c
         else pure state { playedCards = Set.insert cardInstanceId (playedCards state) }
 
 handleSettleCostConsume :: [Player] -> Map Text CardTypeInfo -> PaymentState -> Object -> Either Text PaymentState
-handleSettleCostConsume players cardInfosByName state notification = do
-  args <- objectField "args" notification
-  case optionalField "world_id" args of
-    Nothing -> pure state
-    Just worldIdValue -> do
-      powerId <- intValue "consume world_id" worldIdValue
-      powerCard <- lookupKnownCardName (cardIndex state) powerId
-      powerInfo <- lookupCardInfo cardInfosByName powerCard
-      if cursorPhase (phaseCursor state) == Settle && cardTypeHasGoodForSettleCost powerInfo
-        then do
-          pid <- consumePlayer players powerId args state
-          appendPaymentSpecial pid powerCard state
-        else pure state
+handleSettleCostConsume players cardInfosByName state notification =
+  if inTakeoverDefenderBoost state
+    then pure state
+    else do
+      args <- objectField "args" notification
+      case optionalField "world_id" args of
+        Nothing -> pure state
+        Just worldIdValue -> do
+          powerId <- intValue "consume world_id" worldIdValue
+          powerCard <- lookupKnownCardName (cardIndex state) powerId
+          powerInfo <- lookupCardInfo cardInfosByName powerCard
+          if cursorPhase (phaseCursor state) == Settle && cardTypeHasGoodForSettleCost powerInfo
+            then do
+              pid <- consumePlayer players powerId args state
+              if pid `Set.member` pendingTakeoverPlayers state
+                then pure (appendTakeoverSpecial pid powerCard state)
+                else appendPaymentSpecial pid powerCard state
+            else pure state
 
 handleUpdatePrestige :: Map Text CardTypeInfo -> PaymentState -> Object -> Either Text PaymentState
 handleUpdatePrestige cardInfosByName state notification = do
@@ -442,9 +525,14 @@ handleUpdatePrestige cardInfosByName state notification = do
     Just sourceValue -> do
       source <- canonicalCardName <$> textValue "updatePrestige card_name" sourceValue
       sourceInfo <- lookupCardInfo cardInfosByName source
-      let withPrestige =
-            if nbr < 0 && cardTypeHasPrestigeMilitary sourceInfo
-              then appendPaymentSpecial pid source state
+      let defendingTakeover =
+            currentBgaState state == Just (BgaSettleState BgaSettleTakeoverDefenderBoost)
+          withPrestige =
+            if nbr < 0 && cardTypeHasPrestigeMilitary sourceInfo && not defendingTakeover
+              then
+                if pid `Set.member` pendingTakeoverPlayers state
+                  then pure (appendTakeoverSpecial pid source state)
+                  else appendPaymentSpecial pid source state
               else pure state
       withPrestigeState <- withPrestige
       if cardTypeHasDiplomatBonus sourceInfo
@@ -498,6 +586,20 @@ appendPaymentSpecial pid special state =
           Just (seen <> [line { paymentLineSpecials = appendUnique special (paymentLineSpecials line) }] <> rest)
       | otherwise = go (seen <> [line]) rest
     anyLaterForPid = any ((== pid) . paymentLinePlayer)
+
+appendTakeoverSpecial :: PlayerId -> Text -> PaymentState -> PaymentState
+appendTakeoverSpecial pid special state =
+  state
+    { pendingTakeoverSpecials =
+        Map.alter
+          (Just . appendUnique special . maybe [] id)
+          pid
+          (pendingTakeoverSpecials state)
+    }
+
+inTakeoverDefenderBoost :: PaymentState -> Bool
+inTakeoverDefenderBoost state =
+  currentBgaState state == Just (BgaSettleState BgaSettleTakeoverDefenderBoost)
 
 payMilitarySource :: PlayerId -> CardTypeInfo -> Bool -> PaymentState -> Map Text CardTypeInfo -> Maybe Text
 payMilitarySource pid target preferContact state cardInfosByName =

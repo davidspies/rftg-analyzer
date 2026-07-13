@@ -806,8 +806,9 @@ static void add_candidate(game *g, int who, int type, int list[], int num,
 	score = ai_eval_choice(g, who, type, list, num, special, ns,
 	                       arg1, arg2, arg3);
 
-	/* Skip illegal candidates */
-	if (score <= -3) return;
+	/* Skip unsupported (-2) and illegal (-3) candidates.  Neither is a
+	 * meaningful score to expose as an option. */
+	if (score <= -2) return;
 
 	/* Store candidate (canonical order) */
 	c_ptr = &cand[num_cand++];
@@ -1424,12 +1425,65 @@ static void translate_answer(game *g, int who, entry *e_ptr, int type,
 			*ans_rv = resolve_card(g, toks[0], list, nl ? *nl : 0);
 			break;
 
+		/* Takeover target and the card supplying the takeover power */
+		case CHOICE_TAKEOVER:
+
+			/* Explicit decline */
+			if (num == 1 && !strcmp(toks[0], "none"))
+			{
+				*ans_rv = -1;
+				break;
+			}
+
+			if (num != 2 || sp_at != 1)
+				T_FAIL("invalid TAKEOVER answer %s",
+				       num ? toks[0] : "(empty)", e_ptr->line);
+
+			*ans_rv = resolve_card(g, toks[0], list,
+			                       nl ? *nl : 0);
+			if (*ans_rv < 0)
+				T_FAIL("cannot resolve takeover target \"%s\"",
+				       toks[0], e_ptr->line);
+
+			reset_used();
+			x = resolve_card(g, toks[1], special, ns ? *ns : 0);
+			if (x < 0)
+				T_FAIL("cannot resolve takeover power \"%s\"",
+				       toks[1], e_ptr->line);
+			ans_special[0] = x;
+			*ans_ns = 1;
+			break;
+
+		/* Pending takeover targets and powers are parallel arrays. */
+		case CHOICE_TAKEOVER_PREVENT:
+
+			if (num == 1 && !strcmp(toks[0], "none")) break;
+			if (num != 2 || sp_at != 1)
+				T_FAIL("invalid TAKEOVER_PREVENT answer %s",
+				       num ? toks[0] : "(empty)", e_ptr->line);
+
+			n_list = nl ? *nl : 0;
+			n_special = ns ? *ns : 0;
+			for (i = 0; i < n_list && i < n_special; i++)
+			{
+				if (strcmp(card_name(g, list[i]), toks[0])) continue;
+				if (strcmp(card_name(g, special[i]), toks[1])) continue;
+				ans_list[0] = list[i];
+				ans_special[0] = special[i];
+				*ans_nl = 1;
+				*ans_ns = 1;
+				break;
+			}
+			if (!*ans_nl)
+				T_FAIL("cannot match takeover prevention for \"%s\"",
+				       toks[0], e_ptr->line);
+			break;
+
 		/* Numeric return value */
 		case CHOICE_LUCKY:
 		case CHOICE_SEARCH_TYPE:
 		case CHOICE_SEARCH_KEEP:
 		case CHOICE_OORT_KIND:
-		case CHOICE_TAKEOVER:
 
 			*ans_rv = atoi(toks[0]);
 			break;
@@ -1462,6 +1516,7 @@ static void translate_answer(game *g, int who, entry *e_ptr, int type,
 		case CHOICE_START:
 		case CHOICE_DISCARD_PRODUCE:
 		case CHOICE_UPGRADE:
+		case CHOICE_DEFEND:
 
 			/* Check for explicit "none" */
 			if (num == 1 && !strcmp(toks[0], "none")) break;
@@ -1866,6 +1921,9 @@ static void an_make_choice(game *g, int who, int type, int list[], int *nl,
 		    type != CHOICE_CONSUME_HAND &&
 		    type != CHOICE_DISCARD_PRESTIGE &&
 		    type != CHOICE_TAKEOVER &&
+		    type != CHOICE_DEFEND &&
+		    type != CHOICE_TAKEOVER_PREVENT &&
+		    type != CHOICE_DISCARD_PRODUCE &&
 		    type != CHOICE_WINDFALL)
 		{
 			sprintf(msg, "script mismatch for player %d: engine "
@@ -1964,11 +2022,17 @@ static void an_make_choice(game *g, int who, int type, int list[], int *nl,
 		              ans_ns, ans_rv);
 	}
 
-	/* For PLACE-like types the answer list is the rv */
-	if (type == CHOICE_PLACE || type == CHOICE_ANTE ||
-	    type == CHOICE_KEEP || type == CHOICE_LUCKY ||
-	    type == CHOICE_SEARCH_TYPE || type == CHOICE_SEARCH_KEEP ||
-	    type == CHOICE_OORT_KIND || type == CHOICE_TAKEOVER)
+	/* A takeover returns its target in rv but must preserve the selected
+	 * takeover power in the special list. */
+	if (type == CHOICE_TAKEOVER)
+	{
+		ans_nl = 0;
+	}
+	/* Other rv-valued choices have no answer lists. */
+	else if (type == CHOICE_PLACE || type == CHOICE_ANTE ||
+	         type == CHOICE_KEEP || type == CHOICE_LUCKY ||
+	         type == CHOICE_SEARCH_TYPE || type == CHOICE_SEARCH_KEEP ||
+	         type == CHOICE_OORT_KIND)
 	{
 		ans_nl = 0;
 		ans_ns = 0;
@@ -2004,6 +2068,7 @@ static decisions script_func =
 	NULL,
 	NULL,
 	NULL,
+	1,
 };
 
 /*

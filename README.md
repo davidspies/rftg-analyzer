@@ -118,12 +118,10 @@ The test replays each fixture with `engine/analyzer --no-score`.
 - ✅ BGA fetcher + Haskell parser: all cached games (2P advanced and 3P,
   including a conceded game) replay end-to-end with per-round state
   validation and exact final-score matches against BGA's records.
-- 🚧 Takeover-enabled games are not yet scriptable
-  (TAKEOVER/DEFEND/TAKEOVER_PREVENT).
-  Takeover/defend choices not yet scripted. Debugging loop:
-  `cabal exec rftg-bga-parser -- data/games/<t>.json --user <name> > s.script`
-  then `engine/analyzer --no-score -v s.script` vs
-  `python3 server/timeline.py data/games/<t>.json`.
+- ✅ Takeover-enabled games are scriptable, including takeover selection,
+  attacker payment, defense, and Pan-Galactic Security Council prevention.
+  Takeover/defend/prevent decisions replay exactly; option scoring for those
+  three decision types is not yet available.
 - Win-probability caveats: scores come from `eval_game`, which is the
   AI's value function — win probability plus small VP-progress shaping
   terms, so values can slightly exceed 1. Comparisons within one

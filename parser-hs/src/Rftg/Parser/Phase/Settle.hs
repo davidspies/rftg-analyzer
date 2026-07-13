@@ -45,9 +45,11 @@ import Rftg.Keldon.Script
   )
 import Rftg.Parser.CardIndex
   ( CardIndex (..)
+  , applyTakeoverCardMove
   , initialCardIndex
   , learnNotificationCards
   , lookupKnownCardName
+  , takeoverCardMove
   )
 import Rftg.Parser.Common
   ( CardTypeInfo (..)
@@ -136,7 +138,14 @@ settleStep players cardInfosByName cardTypes state (eventIx, notification) = do
     "showTableau" -> handleShowTableau cardTypes stateWithCards notification
     "discardfromtableau" -> handleDiscardFromTableau cardInfosByName stateWithCards notification
     "playcard" -> handlePlayCard players cardInfosByName cardTypes eventIx stateWithCards notification
+    "takeover" -> handleTakeover cardTypes stateWithCards notification
     _ -> pure stateWithCards
+
+handleTakeover :: Map Int Text -> SettleState -> Object -> Either Text SettleState
+handleTakeover cardTypes state notification = do
+  move <- takeoverCardMove cardTypes notification
+  movedTableau <- applyTakeoverCardMove move (tableauCards state)
+  pure state { tableauCards = movedTableau }
 
 handleGameState :: [Player] -> Int -> SettleState -> Object -> Either Text SettleState
 handleGameState players eventIx state notification = do

@@ -3,6 +3,8 @@
 
 module Rftg.Parser.CardIndex
   ( CardIndex (..)
+  , TakeoverCardMove (..)
+  , applyTakeoverCardMove
   , cardsFromNotification
   , cardsPlayerId
   , discardCardIds
@@ -10,6 +12,7 @@ module Rftg.Parser.CardIndex
   , initialCardIndex
   , learnNotificationCards
   , lookupKnownCardName
+  , takeoverCardMove
   ) where
 
 import Data.Aeson (Value (..))
@@ -44,6 +47,13 @@ import Rftg.Parser.Setup
 data CardIndex = CardIndex
   { knownCardNames :: Map Int Text
   , knownCardOwners :: Map Int PlayerId
+  }
+  deriving stock (Eq, Show)
+
+data TakeoverCardMove = TakeoverCardMove
+  { takeoverCardFrom :: PlayerId
+  , takeoverCardTo :: PlayerId
+  , takeoverMovedCardName :: Text
   }
   deriving stock (Eq, Show)
 
@@ -122,7 +132,59 @@ notificationCardValues notification =
       args <- objectField "args" notification
       cardsValue <- field "cards" args
       objectValues <$> expectObject "showTableau cards" cardsValue
+    "takeover" -> do
+      args <- objectField "args" notification
+      cardValue <- field "card" args
+      pure [cardValue]
     _ -> pure []
+
+takeoverCardMove :: Map Int Text -> Object -> Either Text TakeoverCardMove
+takeoverCardMove cardTypes notification = do
+  args <- objectField "args" notification
+  from <- PlayerId <$> (intValue "takeover from" =<< field "from" args)
+  to <- PlayerId <$> (intValue "takeover to" =<< field "to" args)
+  cardValue <- field "card" args
+  movedTo <- cardPlayerId cardValue
+  if movedTo /= to
+    then
+      Left
+        ( "takeover destination mismatch: notification says "
+            <> showText (unPlayerId to)
+            <> ", card says "
+            <> showText (unPlayerId movedTo)
+        )
+    else do
+      name <- cardName cardTypes cardValue
+      pure TakeoverCardMove
+        { takeoverCardFrom = from
+        , takeoverCardTo = to
+        , takeoverMovedCardName = name
+        }
+
+applyTakeoverCardMove :: TakeoverCardMove -> Map PlayerId [Text] -> Either Text (Map PlayerId [Text])
+applyTakeoverCardMove move tableau = do
+  sourceCards <-
+    case Map.lookup (takeoverCardFrom move) tableau of
+      Just cards -> pure cards
+      Nothing -> Left ("takeover source player missing from tableau map: " <> showText (unPlayerId (takeoverCardFrom move)))
+  destinationCards <-
+    case Map.lookup (takeoverCardTo move) tableau of
+      Just cards -> pure cards
+      Nothing -> Left ("takeover destination player missing from tableau map: " <> showText (unPlayerId (takeoverCardTo move)))
+  remaining <-
+    case break (== takeoverMovedCardName move) sourceCards of
+      (_, []) ->
+        Left
+          ( "takeover source player "
+              <> showText (unPlayerId (takeoverCardFrom move))
+              <> " does not own "
+              <> takeoverMovedCardName move
+          )
+      (before, _ : after) -> pure (before <> after)
+  pure
+    ( Map.insert (takeoverCardTo move) (destinationCards <> [takeoverMovedCardName move])
+        (Map.insert (takeoverCardFrom move) remaining tableau)
+    )
 
 cardsFromNotification :: Text -> Object -> Either Text [Value]
 cardsFromNotification label notification =

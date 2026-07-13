@@ -22,6 +22,7 @@ import Rftg.Parser.Phase.Payment (parsePaymentChoices)
 import Rftg.Parser.Phase.Place (parsePlaceChoices)
 import Rftg.Parser.Phase.Produce (parseProduceChoices)
 import Rftg.Parser.Phase.Settle (parseSettleChoices)
+import Rftg.Parser.Phase.Takeover (parseTakeoverChoices)
 import Rftg.Parser.Power.DiscardPrestige (parseDiscardPrestigeChoices)
 import Rftg.Parser.Power.Gambling (parseGamblingChoices)
 import Rftg.Parser.Power.Search (parseSearchChoices)
@@ -41,6 +42,7 @@ parseGameScript reviewSelection value = do
   place <- parsePlaceChoices value
   produce <- parseProduceChoices value
   settle <- parseSettleChoices value
+  takeover <- parseTakeoverChoices value
   consume <- parseConsumeChoices value
   gambling <- parseGamblingChoices value
   discardPrestige <- parseDiscardPrestigeChoices value
@@ -61,6 +63,7 @@ parseGameScript reviewSelection value = do
           , scavenger
           , optionalDiscard
           , settle
+          , takeover
           , place
           , payment
           , produce

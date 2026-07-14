@@ -14,6 +14,11 @@ the AI's estimated win probability for each available option.
 | `server/` | local web server and BGA fetcher |
 | `ui/` | single-page review interface |
 
+`engine/analyzer` writes the versioned JSON Lines protocol documented in
+[`TRACE_FORMAT.md`](TRACE_FORMAT.md). Its default stream contains the review
+player's decisions for the web UI; pass `--all-players --no-score` to produce
+a complete machine replay trace.
+
 ## Install
 
 1. Install system dependencies.

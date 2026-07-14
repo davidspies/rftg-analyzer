@@ -11,6 +11,8 @@
  */
 
 #include "rftg.h"
+#include "trace.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,9 +90,13 @@ static int review_player = 0;
 
 /* Map from current seat position to original script index */
 static int orig_of[MAX_PLAYER];
+static trace_context trace = { orig_of, 0 };
 
 /* Whether to compute option scores (slow) */
 static int score_options = 1;
+
+/* Whether to emit every player's decisions instead of only the review player */
+static int all_players;
 
 /* Game was conceded: end gracefully when a player's script runs out */
 static int concede_game;
@@ -98,9 +104,6 @@ static int conceded_here;
 
 /* The game being replayed */
 static game real_game;
-
-/* Sequence number of emitted decisions */
-static int decision_seq;
 
 /* Buffered engine messages to attach to next emitted event */
 static char msg_buf[16384];
@@ -745,6 +748,24 @@ static void sort_ints(int a[], int n)
 	}
 }
 
+static void trace_draw(game *g, int who, int which)
+{
+	flush_messages();
+	trace_emit_draw(g, orig_of, who, which);
+}
+
+static void trace_good(game *g, int world, int good)
+{
+	flush_messages();
+	trace_emit_good(g, world, good);
+}
+
+static void trace_refresh(game *g)
+{
+	flush_messages();
+	trace_emit_refresh(g);
+}
+
 /*
  * True if a stored candidate is the same answer as (list/num,
  * special/ns).  Candidate arrays are kept in canonical (sorted) order,
@@ -1135,13 +1156,19 @@ static void emit_decision(game *g, int who, int type, int list[], int *nl,
                           int ans_special[], int ans_ns, int ans_rv)
 {
 	int i, j;
+	int query_nl = type == CHOICE_ACTION ? 0 : (nl ? *nl : 0);
+	int query_ns = ns ? *ns : 0;
+
+	assert(type >= 0 && type < NUM_CHOICE_NAMES);
 
 	/* Flush pending narration first */
 	flush_messages();
 
-	printf("{\"event\":\"decision\",\"seq\":%d,\"player\":%d,"
-	       "\"type\":\"%s\",", decision_seq++, who,
-	       type < NUM_CHOICE_NAMES ? choice_name[type] : "?");
+	trace_begin_decision(&trace, g, who, choice_name[type], list, query_nl,
+	                     special, query_ns, arg1, arg2, arg3, ans_rv,
+	                     ans_list, ans_nl, ans_special, ans_ns,
+	                     TRACE_DECISION_ANSWERED);
+	putchar(',');
 
 	/* Offered items (for ACTION the list is an output buffer) */
 	printf("\"offered\":[");
@@ -1239,9 +1266,7 @@ static void emit_decision(game *g, int who, int type, int list[], int *nl,
 	/* Game state */
 	printf("\"state\":");
 	emit_state(g);
-	printf("}\n");
-
-	fflush(stdout);
+	trace_end_decision();
 }
 
 /*
@@ -1633,6 +1658,10 @@ static void an_make_choice(game *g, int who, int type, int list[], int *nl,
 	int translated = 0;
 	char msg[1024];
 
+	/* Every emitted decision starts with empty presentation-only scores. */
+	num_cand = 0;
+	num_pred = 0;
+
 	/* Get original script index for this seat */
 	op = orig_of[who];
 
@@ -1975,51 +2004,32 @@ static void an_make_choice(game *g, int who, int type, int list[], int *nl,
 		sort_ints(ans_special, ans_ns);
 	}
 
-	/* Score and emit decision for review player */
-	if (op == review_player)
+	/* Score presentation options only for the player under review. */
+	if (op == review_player && score_options)
 	{
-		static game eval_base;
 		game *eg = g;
 
-		/* Reset candidates and predictions */
-		num_cand = 0;
-		num_pred = 0;
+		enumerate_candidates(eg, who, type, list, nl, special,
+		                     ns, arg1, arg2, arg3, ans_list,
+		                     ans_nl, ans_special, ans_ns,
+		                     ans_rv);
 
-		/* Compute option scores */
-		if (score_options)
+		/* If enumeration exhaustively covered the played answer's
+		 * size, the played answer itself must be among the candidates.
+		 * If it isn't, enumeration or candidate comparison is broken. */
+		if (enum_exhaustive &&
+		    !answer_present(ans_list, ans_nl, ans_special, ans_ns))
 		{
-			enumerate_candidates(eg, who, type, list, nl, special,
-			                     ns, arg1, arg2, arg3, ans_list,
-			                     ans_nl, ans_special, ans_ns,
-			                     ans_rv);
-
-			/* If enumeration exhaustively covered the played
-			 * answer's size, the played answer itself must be
-			 * among the candidates.  If it isn't, enumeration or
-			 * the candidate comparison is broken -- fail loudly
-			 * rather than silently emitting a duplicate or a
-			 * phantom option. */
-			if (enum_exhaustive &&
-			    !answer_present(ans_list, ans_nl, ans_special,
-			                    ans_ns))
-			{
-				die("played %s answer missing from exhaustive "
-				    "enumeration", choice_name[type], 0);
-			}
-
-			/* Score the actual answer too if not covered */
-			if (type != CHOICE_ACTION && type != CHOICE_PLACE)
-			{
-				add_candidate(eg, who, type, ans_list, ans_nl,
-				              ans_special, ans_ns, arg1,
-				              arg2, arg3);
-			}
+			die("played %s answer missing from exhaustive enumeration",
+			    choice_name[type], 0);
 		}
 
-		/* Emit decision event (reported as original player index) */
-		emit_decision(g, op, type, list, nl, special, ns, arg1,
-		              arg2, arg3, ans_list, ans_nl, ans_special,
-		              ans_ns, ans_rv);
+		/* Score the actual answer too if not covered. */
+		if (type != CHOICE_ACTION && type != CHOICE_PLACE)
+		{
+			add_candidate(eg, who, type, ans_list, ans_nl,
+			              ans_special, ans_ns, arg1, arg2, arg3);
+		}
 	}
 
 	/* A takeover returns its target in rv but must preserve the selected
@@ -2040,6 +2050,20 @@ static void an_make_choice(game *g, int who, int type, int list[], int *nl,
 
 	/* Write answer to choice log */
 write_answer:
+	/* The START question's special array is the physical pair dealt. */
+	if (type == CHOICE_START)
+	{
+		assert(ns != NULL && *ns == 2);
+		trace_emit_start_options(op, special[0], special[1]);
+	}
+
+	if (all_players || op == review_player)
+	{
+		emit_decision(g, op, type, list, nl, special, ns, arg1,
+		              arg2, arg3, ans_list, ans_nl, ans_special,
+		              ans_ns, ans_rv);
+	}
+
 	l_ptr = &p_ptr->choice_log[p_ptr->choice_size];
 
 	*l_ptr++ = type;
@@ -2084,12 +2108,23 @@ int main(int argc, char *argv[])
 	{
 		if (!strcmp(argv[i], "-v")) verbose = 1;
 		else if (!strcmp(argv[i], "--no-score")) score_options = 0;
-		else script_path = argv[i];
+		else if (!strcmp(argv[i], "--all-players")) all_players = 1;
+		else if (argv[i][0] == '-')
+		{
+			fprintf(stderr, "analyzer: unknown option: %s\n", argv[i]);
+			return 1;
+		}
+		else if (!script_path) script_path = argv[i];
+		else
+		{
+			fprintf(stderr, "analyzer: multiple script paths\n");
+			return 1;
+		}
 	}
 
 	if (!script_path)
 	{
-		fprintf(stderr, "usage: analyzer [-v] [--no-score] "
+		fprintf(stderr, "usage: analyzer [-v] [--no-score] [--all-players] "
 		        "<script>\n");
 		return 1;
 	}
@@ -2106,6 +2141,8 @@ int main(int argc, char *argv[])
 
 	/* Load script */
 	load_script(script_path);
+
+	trace_emit_header(all_players ? TRACE_SCOPE_ALL : TRACE_SCOPE_REVIEW);
 
 	/* Build campaign from scripted draws */
 	memset(&analyzer_camp, 0, sizeof(analyzer_camp));
@@ -2163,8 +2200,13 @@ int main(int argc, char *argv[])
 		real_game.p[i].choice_pos = 0;
 	}
 
-	/* Load AI networks (learning disabled) */
-	ai_func.init(&real_game, 0, 0.0);
+	/* Load AI networks only when option scoring will use them. */
+	if (score_options) ai_func.init(&real_game, 0, 0.0);
+
+	/* Emit physical-card events from the authoritative engine operations. */
+	draw_hook = trace_draw;
+	good_hook = trace_good;
+	refresh_hook = trace_refresh;
 
 	/* Initialize and play game */
 	init_game(&real_game);
@@ -2214,23 +2256,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	/* Emit final result */
-	printf("{\"event\":\"result\",\"players\":[");
-	for (i = 0; i < real_game.num_players; i++)
-	{
-		if (i) putchar(',');
-		printf("{\"name\":");
-		json_str(real_game.p[i].name);
-		printf(",\"vp\":%d,\"winner\":%d,"
-		       "\"chips\":%d,\"goal_vp\":%d,\"prestige\":%d,"
-		       "\"card_vp\":%d}",
-		       real_game.p[i].end_vp, real_game.p[i].winner,
-		       real_game.p[i].vp, real_game.p[i].goal_vp,
-		       real_game.p[i].prestige,
-		       real_game.p[i].end_vp - real_game.p[i].vp -
-		       real_game.p[i].goal_vp - real_game.p[i].prestige);
-	}
-	printf("]}\n");
+	trace_emit_result(&real_game, orig_of);
 
 	return 0;
 }

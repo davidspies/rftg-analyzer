@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from server import haskell_parser
+from server.app import parse_trace
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "bga_games"
@@ -59,6 +60,11 @@ class HaskellCachedBgaGameRegression(unittest.TestCase):
                     failures.append(
                         f"{table_id}: analyzer failed: "
                         f"{_last_line(replayed.stderr)}")
+                    continue
+                try:
+                    parse_trace(analysis.read_text(), required_scope="review")
+                except ValueError as exc:
+                    failures.append(f"{table_id}: invalid analyzer trace: {exc}")
 
         if failures:
             self.fail("\n".join(failures))
@@ -105,6 +111,12 @@ class HaskellCachedBgaGameRegression(unittest.TestCase):
                     failures.append(
                         f"{game.stem} p{player_id}: analyzer failed: "
                         f"{_last_line(replayed.stderr)}")
+                    continue
+                try:
+                    parse_trace(analysis.read_text(), required_scope="review")
+                except ValueError as exc:
+                    failures.append(
+                        f"{game.stem} p{player_id}: invalid analyzer trace: {exc}")
 
         if failures:
             self.fail("\n".join(failures))

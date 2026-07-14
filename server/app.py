@@ -33,6 +33,82 @@ BGA_GAMES_DIR = DATA / "games"
 sys.path.insert(0, str(ROOT / "server"))
 
 
+TRACE_EVENTS = {
+    "header", "log", "decision", "draw", "good", "refresh",
+    "start_options", "mismatch", "result",
+}
+
+
+def parse_trace(text: str, required_scope: str | None = None) -> list:
+    """Parse and validate one complete rftg-trace v1 JSONL stream."""
+    events = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid trace JSON at line {line_number}: {exc}") from exc
+        if not isinstance(event, dict):
+            raise ValueError(f"trace line {line_number} is not an object")
+        kind = event.get("event")
+        if kind not in TRACE_EVENTS:
+            raise ValueError(
+                f"unsupported trace event at line {line_number}: {kind!r}")
+        if kind == "mismatch":
+            raise ValueError(f"reference replay mismatch at line {line_number}")
+        events.append(event)
+
+    if not events:
+        raise ValueError("trace is empty")
+    expected_header = {
+        "event": "header",
+        "format": "rftg-trace",
+        "version": 1,
+        "decision_scope": events[0].get("decision_scope"),
+    }
+    if events[0] != expected_header:
+        raise ValueError("first trace event is not an exact rftg-trace v1 header")
+    scope = events[0]["decision_scope"]
+    if scope not in {"review", "all"}:
+        raise ValueError(f"unsupported decision scope: {scope!r}")
+    if required_scope is not None and scope != required_scope:
+        raise ValueError(
+            f"trace decision scope is {scope!r}, expected {required_scope!r}")
+
+    expected_seq = 0
+    result_index = None
+    for index, event in enumerate(events[1:], 1):
+        kind = event["event"]
+        if kind == "header":
+            raise ValueError(f"duplicate trace header at event {index}")
+        if kind == "decision":
+            if event.get("seq") != expected_seq:
+                raise ValueError(
+                    f"decision sequence mismatch: expected {expected_seq}, "
+                    f"got {event.get('seq')!r}")
+            expected_seq += 1
+            for field in ("player", "type", "need", "query", "answer",
+                          "state_digest"):
+                if field not in event:
+                    raise ValueError(
+                        f"decision {event['seq']} is missing {field!r}")
+            if event["need"] != 0:
+                raise ValueError(
+                    f"stored decision {event['seq']} is still pending")
+        if kind == "result":
+            if result_index is not None:
+                raise ValueError("trace has multiple result events")
+            result_index = index
+
+    if result_index is None:
+        raise ValueError("trace has no result event")
+    if result_index != len(events) - 1:
+        raise ValueError("trace result is not the terminal event")
+    return events
+
+
 def run_analyzer(script_path: Path, out_path: Path) -> dict:
     """Run the analyzer on a script, store JSONL, return summary."""
     proc = subprocess.run(
@@ -42,9 +118,9 @@ def run_analyzer(script_path: Path, out_path: Path) -> dict:
         raise RuntimeError(
             f"analyzer failed (rc={proc.returncode}): "
             f"{proc.stderr.strip()[-500:]}")
+    events = parse_trace(proc.stdout, required_scope="review")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(proc.stdout)
-    events = [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
     decisions = [e for e in events if e.get("event") == "decision"]
     result = next((e for e in events if e.get("event") == "result"), None)
     return {"decisions": len(decisions), "result": result}
@@ -251,8 +327,7 @@ class Handler(BaseHTTPRequestHandler):
             f = ANALYSIS_DIR / f"{game_id}.jsonl"
             if not f.exists():
                 return self._error("not found", 404)
-            events = [json.loads(l) for l in f.read_text().splitlines()
-                      if l.strip()]
+            events = parse_trace(f.read_text(), required_scope="review")
             return self._json(events)
 
         if path.startswith("/api/bga/players/"):

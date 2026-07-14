@@ -21,8 +21,8 @@ $(DATA)/network: $(SRC)/network
 	mkdir -p $(DATA)
 	ln -sfn $(abspath $(SRC)/network) $@
 
-analyzer: analyzer.c $(ENGINE_SRCS) $(SRC)/rftg.h
-	gcc $(CFLAGS) -o $@ analyzer.c $(ENGINE_SRCS) -lm
+analyzer: analyzer.c trace.c trace.h $(ENGINE_SRCS) $(SRC)/rftg.h
+	gcc $(CFLAGS) -o $@ analyzer.c trace.c $(ENGINE_SRCS) -lm
 
 genscript: genscript.c $(ENGINE_SRCS) $(SRC)/rftg.h
 	gcc $(CFLAGS) -o $@ genscript.c $(ENGINE_SRCS) -lm

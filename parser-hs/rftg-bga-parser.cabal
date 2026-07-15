@@ -23,6 +23,7 @@ library
     Rftg.Bga.Types
     Rftg.Keldon.Render
     Rftg.Keldon.Script
+    Rftg.Native.Render
     Rftg.Parser.Common
     Rftg.Parser.Action
     Rftg.Parser.CardIndex
@@ -59,6 +60,19 @@ executable rftg-bga-parser
   import: warnings
   hs-source-dirs: app
   main-is: Main.hs
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    rftg-bga-parser,
+    text
+  default-language: GHC2021
+
+test-suite native-render-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: NativeRenderSpec.hs
   build-depends:
     aeson,
     base,
